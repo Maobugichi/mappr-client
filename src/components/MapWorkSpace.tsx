@@ -9,6 +9,7 @@ import { DesignSystemView } from './DesignSystemView';
 import { DevPlanView } from './DevPlanView';
 import { Overview } from './Overview';
 import { AllView } from './AllView';
+import { ExportMenu } from './ExportMenu';
 
 type ViewId =
   | 'overview'
@@ -32,27 +33,28 @@ const VIEWS: { id: ViewId; label: string }[] = [
 ];
 
 export function MapWorkspace({ data }: { data: MapprSystem }) {
-  // Defaults to Architecture rather than Overview — it's the one view
-  // that's actually finished, so that's what a first-time viewer should
-  // land on rather than a placeholder.
+ 
   const [activeView, setActiveView] = useState<ViewId>('architecture');
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap gap-1 border-b border-canvas-grid pb-2">
-        {VIEWS.map((view) => (
-          <button
-            key={view.id}
-            onClick={() => setActiveView(view.id)}
-            className={`rounded-full px-3 py-1.5 font-mono text-xs transition-colors ${
-              activeView === view.id
-                ? 'bg-signal text-canvas'
-                : 'text-text-muted hover:bg-surface-raised hover:text-text'
-            }`}
-          >
-            {view.label}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-canvas-grid pb-2">
+        <div className="flex flex-wrap gap-1">
+          {VIEWS.map((view) => (
+            <button
+              key={view.id}
+              onClick={() => setActiveView(view.id)}
+              className={`rounded-full px-3 py-1.5 font-mono text-xs transition-colors ${
+                activeView === view.id
+                  ? 'bg-signal text-canvas'
+                  : 'text-text-muted hover:bg-surface-raised hover:text-text'
+              }`}
+            >
+              {view.label}
+            </button>
+          ))}
+        </div>
+        <ExportMenu data={data} />
       </div>
 
       {activeView === 'overview' && <Overview product={data.product} features={data.features} />}
