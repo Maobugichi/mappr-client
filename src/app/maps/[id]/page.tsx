@@ -23,7 +23,7 @@ export default async function MapPage({ params }: { params: Promise<{ id: string
         <p className="max-w-xl font-body text-text-muted">{map.data.meta.oneLineSummary}</p>
       </div>
 
-      <MapWorkspace data={map.data} />
+      <MapWorkspace mapId={map.id} data={map.data} />
     </div>
   );
 }

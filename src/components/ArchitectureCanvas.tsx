@@ -1,37 +1,131 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
   Background,
   BackgroundVariant,
   Controls,
+  Panel,
   type Node,
   type Edge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { MagnifyingGlassIcon } from '@phosphor-icons/react';
 import { getLayoutedElements } from '@/lib/layout';
-import { ArchitectureNode } from './nodes/ArchitectureNode';
+import { ArchitectureNode, type ArchitectureNodeData } from './nodes/ArchitectureNode';
 import { NodeInspector } from './NodeInspector';
-import type { MapprSystem } from '@/lib/api';
+import { ArchitectureReview } from './ArchitectureReview';
+import {
+  ApiError,
+  getArchitectureReview,
+  runArchitectureReview,
+  setFindingDismissed,
+  type ArchitectureReview as ArchitectureReviewData,
+  type MapprSystem,
+} from '@/lib/api';
 
 const nodeTypes = { architecture: ArchitectureNode };
 
 type ArchitectureCanvasProps = {
+  mapId: string;
   architecture: MapprSystem['architecture'];
 };
 
-function ArchitectureCanvasInner({ architecture }: ArchitectureCanvasProps) {
+function ArchitectureCanvasInner({ mapId, architecture }: ArchitectureCanvasProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
+  const [review, setReview] = useState<ArchitectureReviewData | null>(null);
+  const [isReviewPanelOpen, setIsReviewPanelOpen] = useState(false);
+  const [isRunningReview, setIsRunningReview] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [activeFindingId, setActiveFindingId] = useState<string | null>(null);
+
+  // Load any previously persisted review for this map on mount, so
+  // reopening a map doesn't require re-running (and re-paying for) a
+  // review that already exists.
+  useEffect(() => {
+    let cancelled = false;
+    getArchitectureReview(mapId).then((existing) => {
+      if (cancelled || !existing) return;
+      setReview(existing);
+      setIsReviewPanelOpen(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [mapId]);
+
+  const handleRunReview = useCallback(async () => {
+    setIsRunningReview(true);
+    setReviewError(null);
+    setIsReviewPanelOpen(true);
+    setActiveFindingId(null);
+    try {
+      const result = await runArchitectureReview(mapId);
+      setReview(result);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setReviewError(err.body.message ?? err.body.error);
+      } else {
+        setReviewError('Something went wrong running the review.');
+      }
+    } finally {
+      setIsRunningReview(false);
+    }
+  }, [mapId]);
+
+  const handleDismissFinding = useCallback(
+    (findingId: string, dismissed: boolean) => {
+      // Optimistic update — the review panel should feel immediate;
+      // the persisted result reconciles once the request resolves.
+      setReview((prev) =>
+        prev
+          ? {
+              ...prev,
+              findings: prev.findings.map((f) =>
+                f.id === findingId ? { ...f, dismissed } : f
+              ),
+            }
+          : prev
+      );
+      if (activeFindingId === findingId && dismissed) {
+        setActiveFindingId(null);
+      }
+      setFindingDismissed(mapId, findingId, dismissed)
+        .then((result) => setReview(result))
+        .catch((err) => {
+          console.error('Failed to persist finding dismissal:', err);
+        });
+    },
+    [mapId, activeFindingId]
+  );
+
+  const activeFinding = useMemo(
+    () => review?.findings.find((f) => f.id === activeFindingId) ?? null,
+    [review, activeFindingId]
+  );
+
+  const highlightedNodeIds = useMemo(
+    () => new Set(activeFinding?.affectedNodeIds ?? []),
+    [activeFinding]
+  );
+
   const { nodes, edges } = useMemo(() => {
-    const rawNodes: Node[] = architecture.nodes.map((node) => ({
-      id: node.id,
-      type: 'architecture',
-      data: { label: node.label, type: node.type },
-      position: { x: 0, y: 0 }, 
-    }));
+    const rawNodes: Node[] = architecture.nodes.map((node) => {
+      const data: ArchitectureNodeData = {
+        label: node.label,
+        type: node.type,
+        highlightSeverity: highlightedNodeIds.has(node.id) ? activeFinding?.severity : undefined,
+      };
+      return {
+        id: node.id,
+        type: 'architecture',
+        data,
+        position: { x: 0, y: 0 },
+      };
+    });
 
     const rawEdges: Edge[] = architecture.edges.map((edge, index) => ({
       id: `${edge.from}-${edge.to}-${index}`,
@@ -43,7 +137,7 @@ function ArchitectureCanvasInner({ architecture }: ArchitectureCanvasProps) {
     }));
 
     return getLayoutedElements(rawNodes, rawEdges, 'TB');
-  }, [architecture]);
+  }, [architecture, highlightedNodeIds, activeFinding]);
 
   const selectedNode = useMemo(
     () => architecture.nodes.find((node) => node.id === selectedNodeId) ?? null,
@@ -67,6 +161,8 @@ function ArchitectureCanvasInner({ architecture }: ArchitectureCanvasProps) {
       });
   }, [architecture.edges, architecture.nodes, selectedNodeId]);
 
+  const activeFindingsCount = review?.findings.filter((f) => !f.dismissed).length ?? 0;
+
   return (
     <>
       <ReactFlow
@@ -79,7 +175,42 @@ function ArchitectureCanvasInner({ architecture }: ArchitectureCanvasProps) {
       >
         <Background variant={BackgroundVariant.Dots} color="var(--color-canvas-grid)" gap={24} />
         <Controls />
+        <Panel position="top-right">
+          <button
+            onClick={handleRunReview}
+            disabled={isRunningReview}
+            className="flex items-center gap-2 rounded-full bg-signal px-4 py-2 font-mono text-xs uppercase tracking-wide text-canvas shadow-lg transition-opacity hover:opacity-90 disabled:opacity-60"
+          >
+            <MagnifyingGlassIcon size={14} weight="bold" />
+            {isRunningReview
+              ? 'Reviewing…'
+              : review
+                ? `Re-run Review${activeFindingsCount > 0 ? ` (${activeFindingsCount})` : ''}`
+                : 'Run Architecture Review'}
+          </button>
+        </Panel>
+        {reviewError && (
+          <Panel position="top-center">
+            <div className="rounded-lg border border-danger bg-surface px-4 py-2 font-body text-xs text-danger">
+              {reviewError}
+            </div>
+          </Panel>
+        )}
       </ReactFlow>
+
+      {isReviewPanelOpen && review && (
+        <ArchitectureReview
+          findings={review.findings}
+          activeFindingId={activeFindingId}
+          onSelectFinding={setActiveFindingId}
+          onDismissFinding={handleDismissFinding}
+          onClose={() => {
+            setIsReviewPanelOpen(false);
+            setActiveFindingId(null);
+          }}
+          isRunning={isRunningReview}
+        />
+      )}
 
       {selectedNode && (
         <NodeInspector
@@ -93,7 +224,6 @@ function ArchitectureCanvasInner({ architecture }: ArchitectureCanvasProps) {
     </>
   );
 }
-
 
 export function ArchitectureCanvas(props: ArchitectureCanvasProps) {
   return (

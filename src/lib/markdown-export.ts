@@ -92,11 +92,18 @@ export function generateMarkdown(data: MapprSystem): string {
   lines.push('');
 
   lines.push('## Development Plan', '');
+  const featureNameById = new Map(data.features.map((f) => [f.id, f.name]));
   const sortedPhases = [...data.developmentPlan].sort((a, b) => a.phase - b.phase);
   for (const phase of sortedPhases) {
     lines.push(`### Phase ${phase.phase}: ${phase.title}`, '');
     for (const item of phase.items) {
-      lines.push(`- [ ] ${item}`);
+      const related =
+        item.relatedFeatures.length > 0
+          ? ` _(${item.relatedFeatures
+              .map((id) => featureNameById.get(id) ?? id)
+              .join(', ')})_`
+          : '';
+      lines.push(`- [ ] ${item.description}${related}`);
     }
     lines.push('');
   }

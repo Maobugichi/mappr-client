@@ -9,7 +9,6 @@ import { DesignSystemView } from './DesignSystemView';
 import { DevPlanView } from './DevPlanView';
 import { Overview } from './Overview';
 import { AllView } from './AllView';
-import { ExportMenu } from './ExportMenu';
 
 type ViewId =
   | 'overview'
@@ -32,38 +31,43 @@ const VIEWS: { id: ViewId; label: string }[] = [
   { id: 'json', label: 'JSON' },
 ];
 
-export function MapWorkspace({ data }: { data: MapprSystem }) {
- 
+export function MapWorkspace({ mapId, data }: { mapId: string; data: MapprSystem }) {
+  // Defaults to Architecture rather than Overview — it's the one view
+  // that's actually finished, so that's what a first-time viewer should
+  // land on rather than a placeholder.
   const [activeView, setActiveView] = useState<ViewId>('architecture');
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-canvas-grid pb-2">
-        <div className="flex flex-wrap gap-1">
-          {VIEWS.map((view) => (
-            <button
-              key={view.id}
-              onClick={() => setActiveView(view.id)}
-              className={`rounded-full px-3 py-1.5 font-mono text-xs transition-colors ${
-                activeView === view.id
-                  ? 'bg-signal text-canvas'
-                  : 'text-text-muted hover:bg-surface-raised hover:text-text'
-              }`}
-            >
-              {view.label}
-            </button>
-          ))}
-        </div>
-        <ExportMenu data={data} />
+      <div className="flex flex-wrap gap-1 border-b border-canvas-grid pb-2">
+        {VIEWS.map((view) => (
+          <button
+            key={view.id}
+            onClick={() => setActiveView(view.id)}
+            className={`rounded-full px-3 py-1.5 font-mono text-xs transition-colors ${
+              activeView === view.id
+                ? 'bg-signal text-canvas'
+                : 'text-text-muted hover:bg-surface-raised hover:text-text'
+            }`}
+          >
+            {view.label}
+          </button>
+        ))}
       </div>
 
-      {activeView === 'overview' && <Overview product={data.product} features={data.features} />}
-      {activeView === 'architecture' && <ArchitectureCanvas architecture={data.architecture} />}
+      {activeView === 'overview' && (
+        <Overview mapId={mapId} product={data.product} features={data.features} />
+      )}
+      {activeView === 'architecture' && (
+        <ArchitectureCanvas mapId={mapId} architecture={data.architecture} />
+      )}
       {activeView === 'tech-stack' && <TechStackView techStack={data.techStack} />}
       {activeView === 'database' && <DatabaseCanvas dataModel={data.dataModel} />}
       {activeView === 'design-system' && <DesignSystemView designSystem={data.designSystem} />}
-      {activeView === 'dev-plan' && <DevPlanView developmentPlan={data.developmentPlan} />}
-      {activeView === 'all' && <AllView data={data} />}
+      {activeView === 'dev-plan' && (
+        <DevPlanView developmentPlan={data.developmentPlan} features={data.features} />
+      )}
+      {activeView === 'all' && <AllView mapId={mapId} data={data} />}
       {activeView === 'json' && (
         <pre className="max-h-[600px] overflow-auto rounded-lg bg-surface-raised p-4 font-mono text-xs text-text">
           {JSON.stringify(data, null, 2)}

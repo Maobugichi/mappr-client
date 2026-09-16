@@ -44,6 +44,7 @@ const styles = StyleSheet.create({
 export function MapPdfDocument({ data }: { data: MapprSystem }) {
   const nodeLabelById = new Map(data.architecture.nodes.map((n) => [n.id, n.label]));
   const entityNameById = new Map(data.dataModel.entities.map((e) => [e.id, e.name]));
+  const featureNameById = new Map(data.features.map((f) => [f.id, f.name]));
 
   return (
     <Document>
@@ -173,9 +174,16 @@ export function MapPdfDocument({ data }: { data: MapprSystem }) {
                 Phase {phase.phase}: {phase.title}
               </Text>
               {phase.items.map((item, i) => (
-                <Text key={i} style={styles.listItem}>
-                  ☐ {item}
-                </Text>
+                <View key={i} style={{ marginBottom: 3 }}>
+                  <Text style={styles.listItem}>☐ {item.description}</Text>
+                  {item.relatedFeatures.length > 0 && (
+                    <Text style={styles.connection}>
+                      {item.relatedFeatures
+                        .map((id) => featureNameById.get(id) ?? id)
+                        .join(', ')}
+                    </Text>
+                  )}
+                </View>
               ))}
             </View>
           ))}
