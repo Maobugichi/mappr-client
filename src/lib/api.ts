@@ -115,6 +115,29 @@ export type RequirementsReview = {
   updatedAt: string;
 };
 
+// Mirrors backend/src/schema/architecturePatch.ts (the Zod schema).
+export type ArchitecturePatch = {
+  addNodes: { id: string; label: string; type: string; description: string }[];
+  removeNodeIds: string[];
+  updateNodes: { id: string; label?: string; type?: string; description?: string }[];
+  addEdges: { from: string; to: string; label?: string }[];
+  removeEdges: { from: string; to: string; label?: string }[];
+};
+
+export type IterationResult = {
+  mapId: string;
+  version: number;
+  summary: string;
+  patch: ArchitecturePatch;
+  data: MapprSystem;
+};
+
+export type VersionSummary = {
+  version: number;
+  summary: string;
+  createdAt: string;
+};
+
 type ApiErrorBody = {
   error: string;
   message?: string;
@@ -214,4 +237,15 @@ export function setRequirementDismissed(
     method: 'PATCH',
     body: JSON.stringify({ dismissed }),
   });
+}
+
+export function runIteration(mapId: string, instruction: string): Promise<IterationResult> {
+  return request<IterationResult>(`/maps/${mapId}/iterate`, {
+    method: 'POST',
+    body: JSON.stringify({ instruction }),
+  });
+}
+
+export function getVersions(mapId: string): Promise<VersionSummary[]> {
+  return request<VersionSummary[]>(`/maps/${mapId}/versions`);
 }

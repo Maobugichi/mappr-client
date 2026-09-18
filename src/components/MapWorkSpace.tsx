@@ -31,11 +31,17 @@ const VIEWS: { id: ViewId; label: string }[] = [
   { id: 'json', label: 'JSON' },
 ];
 
-export function MapWorkspace({ mapId, data }: { mapId: string; data: MapprSystem }) {
+export function MapWorkspace({ mapId, data: initialData }: { mapId: string; data: MapprSystem }) {
   // Defaults to Architecture rather than Overview — it's the one view
   // that's actually finished, so that's what a first-time viewer should
   // land on rather than a placeholder.
   const [activeView, setActiveView] = useState<ViewId>('architecture');
+
+  // Lifted into state (rather than read directly from the prop) so that
+  // an Architecture Iteration result — which changes the whole system,
+  // not just what ArchitectureCanvas renders — propagates to every
+  // other view (JSON, All, etc.) without a full page reload.
+  const [data, setData] = useState<MapprSystem>(initialData);
 
   return (
     <div className="flex flex-col gap-4">
@@ -59,7 +65,11 @@ export function MapWorkspace({ mapId, data }: { mapId: string; data: MapprSystem
         <Overview mapId={mapId} product={data.product} features={data.features} />
       )}
       {activeView === 'architecture' && (
-        <ArchitectureCanvas mapId={mapId} architecture={data.architecture} />
+        <ArchitectureCanvas
+          mapId={mapId}
+          architecture={data.architecture}
+          onSystemUpdated={setData}
+        />
       )}
       {activeView === 'tech-stack' && <TechStackView techStack={data.techStack} />}
       {activeView === 'database' && <DatabaseCanvas dataModel={data.dataModel} />}

@@ -38,16 +38,18 @@ export function Overview({
   const [error, setError] = useState<string | null>(null);
   const [activeFindingId, setActiveFindingId] = useState<string | null>(null);
 
-  // Load any previously persisted review on mount — same convention as
-  // ArchitectureCanvas.tsx, so reopening a map doesn't re-run (and
-  // re-pay for) a check that already exists.
-  useEffect(() => {
+   useEffect(() => {
     let cancelled = false;
-    getRequirementsReview(mapId).then((existing) => {
-      if (cancelled || !existing) return;
-      setReview(existing);
-      setIsPanelOpen(true);
-    });
+    getRequirementsReview(mapId)
+      .then((existing) => {
+        if (cancelled || !existing) return;
+        setReview(existing);
+        setIsPanelOpen(true);
+      })
+      .catch((err) => {
+        
+        console.error('Failed to load existing requirements review:', err);
+      });
     return () => {
       cancelled = true;
     };

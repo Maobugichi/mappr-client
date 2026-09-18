@@ -17,10 +17,12 @@ import { getLayoutedElements } from '@/lib/layout';
 import { ArchitectureNode, type ArchitectureNodeData } from './nodes/ArchitectureNode';
 import { NodeInspector } from './NodeInspector';
 import { ArchitectureReview } from './ArchitectureReview';
+import { IterationBar } from './IterationBar';
 import {
   ApiError,
   getArchitectureReview,
   runArchitectureReview,
+  runIteration,
   setFindingDismissed,
   type ArchitectureReview as ArchitectureReviewData,
   type MapprSystem,
@@ -31,9 +33,10 @@ const nodeTypes = { architecture: ArchitectureNode };
 type ArchitectureCanvasProps = {
   mapId: string;
   architecture: MapprSystem['architecture'];
+  onSystemUpdated: (system: MapprSystem) => void;
 };
 
-function ArchitectureCanvasInner({ mapId, architecture }: ArchitectureCanvasProps) {
+function ArchitectureCanvasInner({ mapId, architecture, onSystemUpdated }: ArchitectureCanvasProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
   const [review, setReview] = useState<ArchitectureReviewData | null>(null);
@@ -42,16 +45,22 @@ function ArchitectureCanvasInner({ mapId, architecture }: ArchitectureCanvasProp
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [activeFindingId, setActiveFindingId] = useState<string | null>(null);
 
-  // Load any previously persisted review for this map on mount, so
-  // reopening a map doesn't require re-running (and re-paying for) a
-  // review that already exists.
+  const [isIterating, setIsIterating] = useState(false);
+  const [iterationError, setIterationError] = useState<string | null>(null);
+  const [lastIterationSummary, setLastIterationSummary] = useState<string | null>(null);
+  const [versionRefreshKey, setVersionRefreshKey] = useState(0);
+
   useEffect(() => {
     let cancelled = false;
-    getArchitectureReview(mapId).then((existing) => {
-      if (cancelled || !existing) return;
-      setReview(existing);
-      setIsReviewPanelOpen(true);
-    });
+    getArchitectureReview(mapId)
+      .then((existing) => {
+        if (cancelled || !existing) return;
+        setReview(existing);
+        setIsReviewPanelOpen(true);
+      })
+      .catch((err) => {
+        console.error('Failed to load existing architecture review:', err);
+      });
     return () => {
       cancelled = true;
     };
@@ -78,8 +87,6 @@ function ArchitectureCanvasInner({ mapId, architecture }: ArchitectureCanvasProp
 
   const handleDismissFinding = useCallback(
     (findingId: string, dismissed: boolean) => {
-      // Optimistic update — the review panel should feel immediate;
-      // the persisted result reconciles once the request resolves.
       setReview((prev) =>
         prev
           ? {
@@ -100,6 +107,28 @@ function ArchitectureCanvasInner({ mapId, architecture }: ArchitectureCanvasProp
         });
     },
     [mapId, activeFindingId]
+  );
+
+  const handleIterate = useCallback(
+    async (instruction: string) => {
+      setIsIterating(true);
+      setIterationError(null);
+      try {
+        const result = await runIteration(mapId, instruction);
+        setLastIterationSummary(`v${result.version}: ${result.summary}`);
+        setVersionRefreshKey((k) => k + 1);
+        onSystemUpdated(result.data);
+      } catch (err) {
+        if (err instanceof ApiError) {
+          setIterationError(err.body.message ?? err.body.error);
+        } else {
+          setIterationError('Something went wrong applying that change.');
+        }
+      } finally {
+        setIsIterating(false);
+      }
+    },
+    [mapId, onSystemUpdated]
   );
 
   const activeFinding = useMemo(
@@ -196,6 +225,16 @@ function ArchitectureCanvasInner({ mapId, architecture }: ArchitectureCanvasProp
             </div>
           </Panel>
         )}
+        <Panel position="bottom-center">
+          <IterationBar
+            mapId={mapId}
+            onSubmit={handleIterate}
+            isRunning={isIterating}
+            error={iterationError}
+            lastSummary={lastIterationSummary}
+            refreshKey={versionRefreshKey}
+          />
+        </Panel>
       </ReactFlow>
 
       {isReviewPanelOpen && review && (
