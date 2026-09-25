@@ -13,6 +13,8 @@ type IterationBarProps = {
   // Bumped by the parent whenever a new version lands, so the history
   // list re-fetches without this component needing to know why.
   refreshKey: number;
+  onCompare: (from: number, to: number) => void;
+  isDiffing: boolean;
 };
 
 export function IterationBar({
@@ -22,10 +24,13 @@ export function IterationBar({
   lastSummary,
   mapId,
   refreshKey,
+  onCompare,
+  isDiffing,
 }: IterationBarProps) {
   const [instruction, setInstruction] = useState('');
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [versions, setVersions] = useState<VersionSummary[]>([]);
+  const [selectedVersions, setSelectedVersions] = useState<number[]>([]);
 
   useEffect(() => {
     if (!isHistoryOpen) return;
@@ -51,24 +56,67 @@ export function IterationBar({
     setInstruction('');
   };
 
+  // Picking a version toggles it in/out of a max-2 selection — a third
+  // pick replaces the oldest one, so the person doesn't have to
+  // manually deselect before picking a different pair.
+  const toggleVersion = (version: number) => {
+    setSelectedVersions((prev) => {
+      if (prev.includes(version)) return prev.filter((v) => v !== version);
+      if (prev.length < 2) return [...prev, version];
+      return [prev[1], version];
+    });
+  };
+
+  const canCompare = selectedVersions.length === 2 && !isDiffing;
+
   return (
     <div className="flex w-[480px] max-w-[90vw] flex-col gap-2">
       {isHistoryOpen && (
-        <div className="max-h-48 overflow-y-auto rounded-lg border border-canvas-grid bg-surface p-3 shadow-lg">
-          <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-text-muted">
-            Version History
-          </p>
+        <div className="max-h-56 overflow-y-auto rounded-lg border border-canvas-grid bg-surface p-3 shadow-lg">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="font-mono text-[10px] uppercase tracking-wide text-text-muted">
+              Version History
+            </p>
+            {selectedVersions.length > 0 && (
+              <p className="font-mono text-[10px] text-text-muted">
+                {selectedVersions.length}/2 selected
+              </p>
+            )}
+          </div>
           {versions.length === 0 ? (
             <p className="font-body text-xs text-text-muted">No iterations yet.</p>
           ) : (
-            <ul className="flex flex-col gap-1.5">
-              {versions.map((v) => (
-                <li key={v.version} className="flex items-baseline gap-2">
-                  <span className="shrink-0 font-mono text-[10px] text-trace">v{v.version}</span>
-                  <span className="font-body text-xs text-text">{v.summary}</span>
-                </li>
-              ))}
+            <ul className="flex flex-col gap-1">
+              {versions.map((v) => {
+                const isSelected = selectedVersions.includes(v.version);
+                return (
+                  <li key={v.version}>
+                    <button
+                      onClick={() => toggleVersion(v.version)}
+                      className={`flex w-full items-baseline gap-2 rounded px-1.5 py-1 text-left transition-colors ${
+                        isSelected ? 'bg-signal/20' : 'hover:bg-surface-raised'
+                      }`}
+                    >
+                      <span className="shrink-0 font-mono text-[10px] text-trace">
+                        v{v.version}
+                      </span>
+                      <span className="font-body text-xs text-text">{v.summary}</span>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
+          )}
+          {selectedVersions.length === 2 && (
+            <button
+              onClick={() => onCompare(Math.min(...selectedVersions), Math.max(...selectedVersions))}
+              disabled={!canCompare}
+              className="mt-3 w-full rounded-full bg-signal px-3 py-1.5 font-mono text-[10px] uppercase tracking-wide text-canvas transition-opacity hover:opacity-90 disabled:opacity-60"
+            >
+              {isDiffing
+                ? 'Comparing…'
+                : `Compare v${Math.min(...selectedVersions)} → v${Math.max(...selectedVersions)}`}
+            </button>
           )}
         </div>
       )}

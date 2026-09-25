@@ -18,13 +18,16 @@ import { ArchitectureNode, type ArchitectureNodeData } from './nodes/Architectur
 import { NodeInspector } from './NodeInspector';
 import { ArchitectureReview } from './ArchitectureReview';
 import { IterationBar } from './IterationBar';
+import { DiffView } from './DiffView';
 import {
   ApiError,
   getArchitectureReview,
+  getDiff,
   runArchitectureReview,
   runIteration,
   setFindingDismissed,
   type ArchitectureReview as ArchitectureReviewData,
+  type DiffResult,
   type MapprSystem,
 } from '@/lib/api';
 
@@ -50,6 +53,9 @@ function ArchitectureCanvasInner({ mapId, architecture, onSystemUpdated }: Archi
   const [lastIterationSummary, setLastIterationSummary] = useState<string | null>(null);
   const [versionRefreshKey, setVersionRefreshKey] = useState(0);
 
+  const [diffResult, setDiffResult] = useState<DiffResult | null>(null);
+  const [isDiffing, setIsDiffing] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     getArchitectureReview(mapId)
@@ -70,6 +76,7 @@ function ArchitectureCanvasInner({ mapId, architecture, onSystemUpdated }: Archi
     setIsRunningReview(true);
     setReviewError(null);
     setIsReviewPanelOpen(true);
+    setDiffResult(null); // left-side panels are mutually exclusive
     setActiveFindingId(null);
     try {
       const result = await runArchitectureReview(mapId);
@@ -129,6 +136,24 @@ function ArchitectureCanvasInner({ mapId, architecture, onSystemUpdated }: Archi
       }
     },
     [mapId, onSystemUpdated]
+  );
+
+  const handleCompare = useCallback(
+    async (from: number, to: number) => {
+      setIsDiffing(true);
+      setIsReviewPanelOpen(false); // left-side panels are mutually exclusive
+      try {
+        const result = await getDiff(mapId, from, to);
+        setDiffResult(result);
+      } catch (err) {
+        setIterationError(
+          err instanceof ApiError ? (err.body.message ?? err.body.error) : 'Failed to load diff.'
+        );
+      } finally {
+        setIsDiffing(false);
+      }
+    },
+    [mapId]
   );
 
   const activeFinding = useMemo(
@@ -233,6 +258,8 @@ function ArchitectureCanvasInner({ mapId, architecture, onSystemUpdated }: Archi
             error={iterationError}
             lastSummary={lastIterationSummary}
             refreshKey={versionRefreshKey}
+            onCompare={handleCompare}
+            isDiffing={isDiffing}
           />
         </Panel>
       </ReactFlow>
@@ -248,6 +275,15 @@ function ArchitectureCanvasInner({ mapId, architecture, onSystemUpdated }: Archi
             setActiveFindingId(null);
           }}
           isRunning={isRunningReview}
+        />
+      )}
+
+      {diffResult && (
+        <DiffView
+          diff={diffResult.diff}
+          from={diffResult.from}
+          to={diffResult.to}
+          onClose={() => setDiffResult(null)}
         />
       )}
 

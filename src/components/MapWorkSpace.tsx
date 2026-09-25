@@ -62,7 +62,13 @@ export function MapWorkspace({ mapId, data: initialData }: { mapId: string; data
       </div>
 
       {activeView === 'overview' && (
-        <Overview mapId={mapId} product={data.product} features={data.features} />
+        <Overview
+          mapId={mapId}
+          product={data.product}
+          features={data.features}
+          architecture={data.architecture}
+          onSystemUpdated={setData}
+        />
       )}
       {activeView === 'architecture' && (
         <ArchitectureCanvas
@@ -77,7 +83,7 @@ export function MapWorkspace({ mapId, data: initialData }: { mapId: string; data
       {activeView === 'dev-plan' && (
         <DevPlanView developmentPlan={data.developmentPlan} features={data.features} />
       )}
-      {activeView === 'all' && <AllView mapId={mapId} data={data} />}
+      {activeView === 'all' && <AllView mapId={mapId} data={data} onSystemUpdated={setData} />}
       {activeView === 'json' && (
         <pre className="max-h-[600px] overflow-auto rounded-lg bg-surface-raised p-4 font-mono text-xs text-text">
           {JSON.stringify(data, null, 2)}

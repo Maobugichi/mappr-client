@@ -117,11 +117,17 @@ function DatabaseList({ dataModel }: { dataModel: MapprSystem['dataModel'] }) {
   );
 }
 
-export function AllView({ mapId, data }: { mapId: string; data: MapprSystem }) {
+export function AllView({ mapId, data, onSystemUpdated }: { mapId: string; data: MapprSystem, onSystemUpdated: (system: MapprSystem) => void; }) {
   return (
     <div className="flex flex-col gap-10">
       <Section title="Overview">
-        <Overview mapId={mapId} product={data.product} features={data.features} />
+         <Overview
+          mapId={mapId}
+          product={data.product}
+          features={data.features}
+          architecture={data.architecture}
+          onSystemUpdated={onSystemUpdated}
+        />
       </Section>
 
       <Section title="Users">

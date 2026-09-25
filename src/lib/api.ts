@@ -138,6 +138,68 @@ export type VersionSummary = {
   createdAt: string;
 };
 
+export type ArrayDiff<T> = {
+  added: T[];
+  removed: T[];
+  changed: { before: T; after: T; changedFields: string[] }[];
+};
+
+export type SimpleArrayDiff<T> = { added: T[]; removed: T[] };
+
+export type FieldDiff = { field: string; before: unknown; after: unknown };
+
+export type SystemDiff = {
+  meta: FieldDiff[];
+  product: { summary: FieldDiff[]; concepts: SimpleArrayDiff<string> };
+  users: ArrayDiff<MapprSystem['users'][number]>;
+  features: ArrayDiff<MapprSystem['features'][number]>;
+  techStack: ArrayDiff<MapprSystem['techStack'][number]>;
+  architecture: {
+    nodes: ArrayDiff<MapprSystem['architecture']['nodes'][number]>;
+    edges: SimpleArrayDiff<MapprSystem['architecture']['edges'][number]>;
+  };
+  dataModel: {
+    entities: ArrayDiff<MapprSystem['dataModel']['entities'][number]>;
+    relations: SimpleArrayDiff<MapprSystem['dataModel']['relations'][number]>;
+  };
+  designSystem: {
+    colors: ArrayDiff<MapprSystem['designSystem']['colors'][number]>;
+    typography: ArrayDiff<MapprSystem['designSystem']['typography'][number]>;
+    spacing: ArrayDiff<MapprSystem['designSystem']['spacing'][number]>;
+    components: ArrayDiff<MapprSystem['designSystem']['components'][number]>;
+  };
+  developmentPlan: {
+    added: MapprSystem['developmentPlan'][number][];
+    removed: MapprSystem['developmentPlan'][number][];
+    changed: {
+      phase: number;
+      titleChanged: boolean;
+      items: SimpleArrayDiff<MapprSystem['developmentPlan'][number]['items'][number]>;
+    }[];
+  };
+  hasChanges: boolean;
+};
+
+export type DiffResult = {
+  mapId: string;
+  from: number;
+  to: number;
+  diff: SystemDiff;
+};
+
+export type TraceLink = {
+  featureId: string;
+  nodeIds: string[];
+  note?: string;
+};
+
+export type TraceabilityReview = {
+  mapId: string;
+  links: TraceLink[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 type ApiErrorBody = {
   error: string;
   message?: string;
@@ -248,4 +310,23 @@ export function runIteration(mapId: string, instruction: string): Promise<Iterat
 
 export function getVersions(mapId: string): Promise<VersionSummary[]> {
   return request<VersionSummary[]>(`/maps/${mapId}/versions`);
+}
+
+export function getDiff(mapId: string, from: number, to: number): Promise<DiffResult> {
+  return request<DiffResult>(`/maps/${mapId}/diff?from=${from}&to=${to}`);
+}
+
+export async function getTraceability(mapId: string): Promise<TraceabilityReview | null> {
+  try {
+    return await request<TraceabilityReview>(`/maps/${mapId}/traceability`);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+export function runTraceability(mapId: string): Promise<TraceabilityReview> {
+  return request<TraceabilityReview>(`/maps/${mapId}/traceability`, { method: 'POST' });
 }
