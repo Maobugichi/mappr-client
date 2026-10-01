@@ -7,6 +7,7 @@ import { DatabaseCanvas } from './DatabaseCanvas';
 import { TechStackView } from './TechStackView';
 import { DesignSystemView } from './DesignSystemView';
 import { DevPlanView } from './DevPlanView';
+import { ApiContractView } from './ApiContractView';
 import { Overview } from './Overview';
 import { AllView } from './AllView';
 
@@ -17,6 +18,7 @@ type ViewId =
   | 'database'
   | 'design-system'
   | 'dev-plan'
+  | 'api-contract'
   | 'all'
   | 'json';
 
@@ -27,6 +29,7 @@ const VIEWS: { id: ViewId; label: string }[] = [
   { id: 'database', label: 'Database' },
   { id: 'design-system', label: 'Design System' },
   { id: 'dev-plan', label: 'Dev Plan' },
+  { id: 'api-contract', label: 'API Contract' },
   { id: 'all', label: 'All' },
   { id: 'json', label: 'JSON' },
 ];
@@ -82,6 +85,9 @@ export function MapWorkspace({ mapId, data: initialData }: { mapId: string; data
       {activeView === 'design-system' && <DesignSystemView designSystem={data.designSystem} />}
       {activeView === 'dev-plan' && (
         <DevPlanView developmentPlan={data.developmentPlan} features={data.features} />
+      )}
+      {activeView === 'api-contract' && (
+        <ApiContractView mapId={mapId} productName={data.meta.productName} />
       )}
       {activeView === 'all' && <AllView mapId={mapId} data={data} onSystemUpdated={setData} />}
       {activeView === 'json' && (

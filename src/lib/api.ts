@@ -200,6 +200,48 @@ export type TraceabilityReview = {
   updatedAt: string;
 };
 
+export type ContractFieldType =
+  | 'string'
+  | 'integer'
+  | 'number'
+  | 'boolean'
+  | 'uuid'
+  | 'datetime'
+  | 'array'
+  | 'object';
+
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
+export type AccessLevel = 'public' | 'authenticated';
+
+export type ContractField = { name: string; type: ContractFieldType; required: boolean };
+
+export type ContractError = { status: number; description: string };
+
+export type ApiEndpoint = {
+  id: string;
+  method: HttpMethod;
+  path: string;
+  summary: string;
+  featureIds: string[];
+  entityIds: string[];
+  access: AccessLevel;
+  queryParams: ContractField[];
+  bodyFields: ContractField[];
+  successStatus: number;
+  responseFields: ContractField[];
+  errors: ContractError[];
+};
+
+export type ApiContract = {
+  mapId: string;
+  version: number;
+  endpoints: ApiEndpoint[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+
 type ApiErrorBody = {
   error: string;
   message?: string;
@@ -329,4 +371,19 @@ export async function getTraceability(mapId: string): Promise<TraceabilityReview
 
 export function runTraceability(mapId: string): Promise<TraceabilityReview> {
   return request<TraceabilityReview>(`/maps/${mapId}/traceability`, { method: 'POST' });
+}
+
+export async function getApiContract(mapId: string): Promise<ApiContract | null> {
+  try {
+    return await request<ApiContract>(`/maps/${mapId}/api-contract`);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+export function runApiContract(mapId: string): Promise<ApiContract> {
+  return request<ApiContract>(`/maps/${mapId}/api-contract`, { method: 'POST' });
 }
