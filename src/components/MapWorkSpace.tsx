@@ -8,7 +8,10 @@ import { TechStackView } from './TechStackView';
 import { DesignSystemView } from './DesignSystemView';
 import { DevPlanView } from './DevPlanView';
 import { ApiContractView } from './ApiContractView';
+import { DatabaseSchemaView } from './DatabaseSchemaView';
 import { Overview } from './Overview';
+import { AdrView } from './AdrView';
+import { ReadmeView } from './ReadmeView';
 import { AllView } from './AllView';
 
 type ViewId =
@@ -19,6 +22,9 @@ type ViewId =
   | 'design-system'
   | 'dev-plan'
   | 'api-contract'
+  | 'database-schema'
+  | 'adrs'
+  | 'readme'
   | 'all'
   | 'json';
 
@@ -30,6 +36,9 @@ const VIEWS: { id: ViewId; label: string }[] = [
   { id: 'design-system', label: 'Design System' },
   { id: 'dev-plan', label: 'Dev Plan' },
   { id: 'api-contract', label: 'API Contract' },
+  { id: 'database-schema', label: 'DB Schema' },
+  { id: 'adrs', label: 'ADRs' },
+  { id: 'readme', label: 'README' },
   { id: 'all', label: 'All' },
   { id: 'json', label: 'JSON' },
 ];
@@ -88,6 +97,17 @@ export function MapWorkspace({ mapId, data: initialData }: { mapId: string; data
       )}
       {activeView === 'api-contract' && (
         <ApiContractView mapId={mapId} productName={data.meta.productName} />
+      )}
+      {activeView === 'database-schema' && (
+        <DatabaseSchemaView
+          mapId={mapId}
+          productName={data.meta.productName}
+          techStack={data.techStack}
+        />
+      )}
+      {activeView === 'adrs' && <AdrView mapId={mapId} productName={data.meta.productName} />}
+      {activeView === 'readme' && (
+        <ReadmeView mapId={mapId} productName={data.meta.productName} />
       )}
       {activeView === 'all' && <AllView mapId={mapId} data={data} onSystemUpdated={setData} />}
       {activeView === 'json' && (

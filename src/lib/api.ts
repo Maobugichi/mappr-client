@@ -241,6 +241,152 @@ export type ApiContract = {
   updatedAt: string;
 };
 
+// Mirrors backend/src/schema/relationalSchema.ts (the Zod schema).
+export type LogicalType =
+  | 'uuid'
+  | 'string'
+  | 'text'
+  | 'integer'
+  | 'bigint'
+  | 'decimal'
+  | 'boolean'
+  | 'datetime'
+  | 'date'
+  | 'json'
+  | 'enum';
+
+export type RelationalDialect = 'postgres' | 'mysql' | 'sqlite';
+
+export type ColumnReference = { table: string; column: string };
+
+export type RelationalColumn = {
+  name: string;
+  type: LogicalType;
+  nullable: boolean;
+  primaryKey: boolean;
+  references: ColumnReference | null;
+  enumValues: string[] | null;
+};
+
+export type RelationalTable = {
+  entityId: string;
+  tableName: string;
+  columns: RelationalColumn[];
+};
+
+export type RelationalSchemaRecord = {
+  mapId: string;
+  version: number;
+  tables: RelationalTable[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+
+
+export type DocumentLogicalType =
+  | 'objectId'
+  | 'string'
+  | 'integer'
+  | 'bigint'
+  | 'decimal'
+  | 'boolean'
+  | 'datetime'
+  | 'date'
+  | 'object'
+  | 'array'
+  | 'enum';
+
+export type RelationKind = 'embed' | 'reference';
+
+export type FieldRelation = { kind: RelationKind; targetEntityId: string };
+
+export type DocumentField = {
+  name: string;
+  type: DocumentLogicalType;
+  required: boolean;
+  enumValues: string[] | null;
+  relation: FieldRelation | null;
+};
+
+export type DocumentCollection = {
+  entityId: string;
+  collectionName: string;
+  fields: DocumentField[];
+};
+
+export type DocumentSchemaRecord = {
+  mapId: string;
+  version: number;
+  collections: DocumentCollection[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+
+// Mirrors backend/src/schema/adr.ts (the Zod schema).
+export type AdrSubjectType = 'tech_stack' | 'architecture_node' | 'architecture_edge';
+
+export type AdrAlternative = { option: string; reasonRejected: string };
+
+export type Adr = {
+  subjectType: AdrSubjectType;
+  subjectId: string;
+  title: string;
+  context: string;
+  decision: string;
+  alternatives: AdrAlternative[];
+  consequences: string[];
+};
+
+// Keyed by techArchHash, not a map version — see the backend route's
+// own comment on why ADRs persist across dataModel/feature-only edits.
+export type AdrSetRecord = {
+  mapId: string;
+  techArchHash: string;
+  adrs: Adr[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+// Mirrors backend/src/schema/readme.ts (the Zod schema). Only these two
+// fields are AI-generated and stored — everything else in the rendered
+// README (Features, Tech Stack, Architecture, Roadmap, cross-references
+// to other artifacts) is assembled on the backend from data already in+// the map, so there's no type for those here.
+export type GettingStartedStep = { description: string; command: string | null };
+
+export type ReadmeRecord = {
+  mapId: string;
+  version: number;
+  overview: string;
+  gettingStarted: GettingStartedStep[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+// Mirrors backend/src/schema/envVars.ts (the Zod schema).
+export type EnvVar = {
+  name: string;
+  description: string;
+  required: boolean;
+  secret: boolean;
+  placeholder: string;
+  nodeId: string | null;
+  techStackCategory: string | null;
+};
+
+// Keyed by techArchHash, not a map version — same as AdrSetRecord, and
+// for the same reason: adding a feature or editing the data model
+// doesn't change which environment variables a system needs.
+export type EnvVarSetRecord = {
+  mapId: string;
+  techArchHash: string;
+  vars: EnvVar[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+
 
 type ApiErrorBody = {
   error: string;
@@ -277,6 +423,31 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return response.json() as Promise<T>;
+}
+
+
+// Same error handling as request(), but for an endpoint that returns
+// plain text on success rather than JSON — used only by
+// getRelationalSchemaSql, since calling response.json() on real SQL
+// text would throw.
+async function requestText(path: string, init?: RequestInit): Promise<string> {
+  const response = await fetch(`${API_URL}${path}`, {
+    ...init,
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/json',
+      ...init?.headers,
+    },
+  });
+
+  if (!response.ok) {
+    const body = (await response
+      .json()
+      .catch(() => ({ error: 'unknown_error' }))) as ApiErrorBody;
+    throw new ApiError(response.status, body);
+  }
+
+  return response.text();
 }
 
 export function generateMap(description: string): Promise<MapRecord> {
@@ -386,4 +557,106 @@ export async function getApiContract(mapId: string): Promise<ApiContract | null>
 
 export function runApiContract(mapId: string): Promise<ApiContract> {
   return request<ApiContract>(`/maps/${mapId}/api-contract`, { method: 'POST' });
+}
+
+ 
+
+// Same null-on-404 convention as getApiContract above.
+export async function getRelationalSchema(mapId: string): Promise<RelationalSchemaRecord | null> {
+  try {
+    return await request<RelationalSchemaRecord>(`/maps/${mapId}/relational-schema`);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+export function runRelationalSchema(mapId: string): Promise<RelationalSchemaRecord> {
+  return request<RelationalSchemaRecord>(`/maps/${mapId}/relational-schema`, { method: 'POST' });
+}
+
+// Rendering happens on the backend (see relationalRender.ts) — this
+// just fetches the already-rendered text for the chosen dialect.
+export function getRelationalSchemaSql(mapId: string, dialect: RelationalDialect): Promise<string> {
+  return requestText(`/maps/${mapId}/relational-schema/sql?dialect=${dialect}`);
+}
+
+ 
+
+// Same null-on-404 convention as getApiContract/getRelationalSchema above.
+export async function getDocumentSchema(mapId: string): Promise<DocumentSchemaRecord | null> {
+  try {
+    return await request<DocumentSchemaRecord>(`/maps/${mapId}/document-schema`);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+export function runDocumentSchema(mapId: string): Promise<DocumentSchemaRecord> {
+  return request<DocumentSchemaRecord>(`/maps/${mapId}/document-schema`, { method: 'POST' });
+}
+
+// Rendering happens on the backend (see documentRender.ts) — this just
+// fetches the already-rendered mongosh script. No dialect param, unlike
+// getRelationalSchemaSql — there's only one target here.
+export function getDocumentSchemaScript(mapId: string): Promise<string> {
+  return requestText(`/maps/${mapId}/document-schema/script`);
+}
+
+ 
+
+// Same null-on-404 convention as the other three schema features —
+// here a 404 means no ADR set exists for the map's CURRENT
+// techStack+architecture hash specifically (an older set may still
+// exist in storage for a since-changed hash, same as an old version's
+// contract/schema would).
+export async function getAdrs(mapId: string): Promise<AdrSetRecord | null> {
+  try {
+    return await request<AdrSetRecord>(`/maps/${mapId}/adrs`);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+export function runAdrs(mapId: string): Promise<AdrSetRecord> {
+  return request<AdrSetRecord>(`/maps/${mapId}/adrs`, { method: 'POST' });
+}
+
+// Rendering happens on the backend (see adrRender.ts) — this just
+// fetches the already-rendered Markdown. No format param — ADRs only
+// ever render one way.
+export function getAdrsMarkdown(mapId: string): Promise<string> {
+  return requestText(`/maps/${mapId}/adrs/markdown`);
+}
+
+// Same null-on-404 convention as the other version-tied features.
+export async function getReadme(mapId: string): Promise<ReadmeRecord | null> {
+  try {
+    return await request<ReadmeRecord>(`/maps/${mapId}/readme`);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+export function runReadme(mapId: string): Promise<ReadmeRecord> {
+  return request<ReadmeRecord>(`/maps/${mapId}/readme`, { method: 'POST' });
+}
+
+// Rendering happens on the backend (see readmeRender.ts) — this fetches
+// the FULL assembled README (every section, not just overview/
+// gettingStarted), since that's the only place with access to the
+// other four artifacts' existence for cross-referencing.
+export function getReadmeMarkdown(mapId: string): Promise<string> {
+  return requestText(`/maps/${mapId}/readme/markdown`);
 }
