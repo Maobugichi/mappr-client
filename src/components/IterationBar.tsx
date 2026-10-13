@@ -131,7 +131,7 @@ export function IterationBar({
         </div>
       )}
 
-      <div className="flex items-center gap-2 rounded-full border border-canvas-grid bg-surface px-2 py-1.5 shadow-lg">
+       <div className="flex items-center gap-2 rounded-full border border-canvas-grid bg-surface px-2 py-1.5 shadow-lg transition-colors focus-within:border-trace">
         <button
           onClick={() => setIsHistoryOpen((v) => !v)}
           aria-label="Toggle version history"

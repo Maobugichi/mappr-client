@@ -18,6 +18,64 @@
   --text-lg: 1.125rem;
   --text-xl: 1.5rem;
   --text-2xl: 2rem;
+
+  /* ---- Motion tokens (single source of truth) --------------------------
+     See the Mappr motion brief. Components consume these via Tailwind
+     utilities (duration-(--motion-fast), ease-standard) or var(--motion-*)
+     in CSS. Do not hardcode ms values in components. */
+  --motion-micro: 100ms; /* hover, subtle border/background changes */
+  --motion-fast: 160ms; /* focus, selection, small reveals */
+  --motion-standard: 240ms; /* ordinary panel and content transitions */
+  --motion-structural: 400ms; /* genuine layout or representation changes */
+  --motion-construction: 600ms; /* exceptional, multi-stage establishment */
+
+  --motion-ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --motion-ease-enter: cubic-bezier(0, 0, 0.2, 1); /* decelerates into place */
+  --motion-ease-exit: cubic-bezier(0.4, 0, 1, 1); /* leaves efficiently */
+  --motion-ease-structural: cubic-bezier(0.2, 0, 0, 1); /* larger spatial change */
+
+  --motion-distance: 4px; /* max generic entrance translation */
+  --motion-scale-establish: 0.98; /* optional establish scale, 0.98 -> 1 */
+  --motion-opacity-secondary: 0.6; /* de-emphasized, still readable */
+
+  --motion-stagger-tight: 25ms;
+  --motion-stagger-standard: 50ms;
+  --motion-stagger-structural: 100ms;
+
+  /* ---- Syntax tokens -----------------------------------------------------
+     Used by the Pretty JSON view only (an editor-style palette, deliberately
+     distinct from the app palette so Pretty reads differently from Tree).
+     Every colour is >= 4.5:1 on --color-surface; the line number and guide
+     are decorative. Tune the whole look here. */
+  --color-syntax-key: #8ab4ff;
+  --color-syntax-string: #f2b98d;
+  --color-syntax-number: #9ce5b4;
+  --color-syntax-boolean: #c4a7ff;
+  --color-syntax-null: #ff8fa3;
+  --color-syntax-punct: #7d93a8;
+  --color-syntax-bracket-1: #f5d76e;
+  --color-syntax-bracket-2: #d79bff;
+  --color-syntax-bracket-3: #6fd0ff;
+  --color-syntax-line-number: #5f748a; /* 3.4:1 on --color-surface */
+  --color-syntax-guide: rgba(140, 160, 179, 0.22);
+}
+
+/* Reduced motion works by redefining the tokens, so components need no
+   per-component handling and future tabs inherit it. Spatial travel,
+   scale and stagger are removed; the larger durations collapse to
+   immediate. Short color/opacity feedback (micro, fast) is kept because
+   it carries state without any movement. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-standard: 0ms;
+    --motion-structural: 0ms;
+    --motion-construction: 0ms;
+    --motion-distance: 0px;
+    --motion-scale-establish: 1;
+    --motion-stagger-tight: 0ms;
+    --motion-stagger-standard: 0ms;
+    --motion-stagger-structural: 0ms;
+  }
 }
 
 @theme inline {
@@ -32,6 +90,18 @@
   --color-success: var(--color-success);
   --color-danger: var(--color-danger);
 
+  --color-syntax-key: var(--color-syntax-key);
+  --color-syntax-string: var(--color-syntax-string);
+  --color-syntax-number: var(--color-syntax-number);
+  --color-syntax-boolean: var(--color-syntax-boolean);
+  --color-syntax-null: var(--color-syntax-null);
+  --color-syntax-punct: var(--color-syntax-punct);
+  --color-syntax-bracket-1: var(--color-syntax-bracket-1);
+  --color-syntax-bracket-2: var(--color-syntax-bracket-2);
+  --color-syntax-bracket-3: var(--color-syntax-bracket-3);
+  --color-syntax-line-number: var(--color-syntax-line-number);
+  --color-syntax-guide: var(--color-syntax-guide);
+
   /* Sourced from next/font variables set on <html> in layout.tsx —
      kept as distinct names there specifically to avoid colliding with
      these Tailwind-facing token names. */
@@ -45,10 +115,62 @@
   --text-lg: var(--text-lg);
   --text-xl: var(--text-xl);
   --text-2xl: var(--text-2xl);
+
+  --ease-standard: var(--motion-ease-standard);
+  --ease-enter: var(--motion-ease-enter);
+  --ease-exit: var(--motion-ease-exit);
+  --ease-structural: var(--motion-ease-structural);
+
+  /* Plain `transition-*` utilities (the only motion in the app today) now
+     follow the tokens: hover feedback = micro, standard easing. */
+  --default-transition-duration: var(--motion-micro);
+  --default-transition-timing-function: var(--motion-ease-standard);
 }
 
 body {
   background: var(--color-canvas);
   color: var(--color-text);
   font-family: var(--font-body);
+}
+
+/* Keyboard focus: persistent, clear indicator. In @layer base so any
+   component that deliberately supplies its own focus style (a utility
+   like focus:ring-*) still wins. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--color-trace);
+    outline-offset: 2px;
+  }
+}
+
+/* Pretty JSON view: editor-style decoration done entirely in CSS, so the
+   text in the DOM stays the exact JSON — line numbers (counters) and indent
+   guides (gradients) are never selected, copied or matched by find.
+   Block lines with an absolutely placed number (not a grid per line): the
+   same look, noticeably cheaper to lay out on large documents. */
+.json-editor {
+  counter-reset: json-line;
+}
+
+.json-line {
+  position: relative;
+  padding-left: calc(var(--json-gutter, 3ch) + 2.5ch);
+  background-image: repeating-linear-gradient(
+    90deg,
+    var(--color-syntax-guide) 0 1px,
+    transparent 1px 2ch
+  );
+  background-repeat: no-repeat;
+  background-position-x: calc(var(--json-gutter, 3ch) + 2.5ch);
+}
+
+.json-line::before {
+  counter-increment: json-line;
+  content: counter(json-line);
+  position: absolute;
+  left: 0;
+  width: var(--json-gutter, 3ch);
+  text-align: right;
+  color: var(--color-syntax-line-number);
+  user-select: none;
 }

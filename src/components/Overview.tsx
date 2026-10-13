@@ -348,6 +348,7 @@ export function Overview({
                       Fix — describe the component to add
                     </p>
                     <div className="flex items-center gap-2 rounded-full border border-canvas-grid bg-canvas px-2 py-1.5">
+
                       <input
                         value={fixInstruction}
                         onChange={(e) => setFixInstruction(e.target.value)}

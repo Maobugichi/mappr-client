@@ -352,7 +352,7 @@ export type AdrSetRecord = {
 // Mirrors backend/src/schema/readme.ts (the Zod schema). Only these two
 // fields are AI-generated and stored — everything else in the rendered
 // README (Features, Tech Stack, Architecture, Roadmap, cross-references
-// to other artifacts) is assembled on the backend from data already in+// the map, so there's no type for those here.
+// to other artifacts) is assembled on the backend from data already in// the map, so there's no type for those here.
 export type GettingStartedStep = { description: string; command: string | null };
 
 export type ReadmeRecord = {
@@ -387,7 +387,38 @@ export type EnvVarSetRecord = {
 };
 
 
+// Mirrors backend/src/schema/deployment.ts (the Zod schema).
+export type DeploymentManagement = 'managed' | 'self_managed';
 
+export type DeploymentExposure = 'public' | 'internal';
+
+export type DeploymentComponent = {
+  nodeId: string;
+  runsOn: string;
+  management: DeploymentManagement;
+  exposure: DeploymentExposure;
+  scaling: string;
+  healthCheck: string;
+  // null for a stateless component with no data of its own to back up.
+  backup: string | null;
+};
+
+export type DeploymentEnvironment = { name: string; purpose: string };
+
+// Keyed by techArchHash, not a map version — same as AdrSetRecord and
+// EnvVarSetRecord, and for the same reason: where components run
+// depends on techStack  architecture only.
+export type DeploymentRecord = {
+  mapId: string;
+  techArchHash: string;
+  components: DeploymentComponent[];
+  environments: DeploymentEnvironment[];
+  cicdSteps: string[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+ 
 type ApiErrorBody = {
   error: string;
   message?: string;
@@ -612,7 +643,7 @@ export function getDocumentSchemaScript(mapId: string): Promise<string> {
 
 // Same null-on-404 convention as the other three schema features —
 // here a 404 means no ADR set exists for the map's CURRENT
-// techStack+architecture hash specifically (an older set may still
+// techStackarchitecture hash specifically (an older set may still
 // exist in storage for a since-changed hash, same as an old version's
 // contract/schema would).
 export async function getAdrs(mapId: string): Promise<AdrSetRecord | null> {
@@ -659,4 +690,54 @@ export function runReadme(mapId: string): Promise<ReadmeRecord> {
 // other four artifacts' existence for cross-referencing.
 export function getReadmeMarkdown(mapId: string): Promise<string> {
   return requestText(`/maps/${mapId}/readme/markdown`);
+}
+
+ 
+
+// Same null-on-404 convention as getAdrs — a 404 means no variable set
+// exists for the map's CURRENT techStackarchitecture hash (an older
+// set may still be in storage for a since-changed hash).
+export async function getEnvVars(mapId: string): Promise<EnvVarSetRecord | null> {
+  try {
+    return await request<EnvVarSetRecord>(`/maps/${mapId}/env-vars`);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+export function runEnvVars(mapId: string): Promise<EnvVarSetRecord> {
+  return request<EnvVarSetRecord>(`/maps/${mapId}/env-vars`, { method: 'POST' });
+}
+
+ export function getEnvVarsFile(mapId: string): Promise<string> {
+   return requestText(`/maps/${mapId}/env-vars/file`);
+ }
+
+// Same null-on-404 convention as getAdrs/getEnvVars — a 404 means no plan
+// exists for the map's CURRENT techStackarchitecture hash (an older one
+// may still be in storage for a since-changed hash).
+export async function getDeployment(mapId: string): Promise<DeploymentRecord | null> {
+  try {
+    return await request<DeploymentRecord>(`/maps/${mapId}/deployment`);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+export function runDeployment(mapId: string): Promise<DeploymentRecord> {
+  return request<DeploymentRecord>(`/maps/${mapId}/deployment`, { method: 'POST' });
+}
+
+// Rendering happens on the backend (see deploymentRender.ts) — this
+// fetches the finished plan as Markdown. It lives there because it needs
+// the live architecture to list connections and any uncovered nodes, and
+// keeping it in one place means the screen and the download can't drift.
+export function getDeploymentMarkdown(mapId: string): Promise<string> {
+  return requestText(`/maps/${mapId}/deployment/markdown`);
 }

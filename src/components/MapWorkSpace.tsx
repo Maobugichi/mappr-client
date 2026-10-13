@@ -12,7 +12,10 @@ import { DatabaseSchemaView } from './DatabaseSchemaView';
 import { Overview } from './Overview';
 import { AdrView } from './AdrView';
 import { ReadmeView } from './ReadmeView';
+import { EnvVarsView } from './EnvVarsView';
+import { DeploymentView } from './DeploymentView';
 import { AllView } from './AllView';
+import { JsonView } from './JsonView'
 
 type ViewId =
   | 'overview'
@@ -25,6 +28,8 @@ type ViewId =
   | 'database-schema'
   | 'adrs'
   | 'readme'
+  | 'env-vars'
+  | 'deployment'
   | 'all'
   | 'json';
 
@@ -39,6 +44,8 @@ const VIEWS: { id: ViewId; label: string }[] = [
   { id: 'database-schema', label: 'DB Schema' },
   { id: 'adrs', label: 'ADRs' },
   { id: 'readme', label: 'README' },
+  { id: 'env-vars', label: 'Env Vars' },
+  { id: 'deployment', label: 'Deployment' },
   { id: 'all', label: 'All' },
   { id: 'json', label: 'JSON' },
 ];
@@ -109,12 +116,13 @@ export function MapWorkspace({ mapId, data: initialData }: { mapId: string; data
       {activeView === 'readme' && (
         <ReadmeView mapId={mapId} productName={data.meta.productName} />
       )}
-      {activeView === 'all' && <AllView mapId={mapId} data={data} onSystemUpdated={setData} />}
-      {activeView === 'json' && (
-        <pre className="max-h-[600px] overflow-auto rounded-lg bg-surface-raised p-4 font-mono text-xs text-text">
-          {JSON.stringify(data, null, 2)}
-        </pre>
+      {activeView === 'env-vars' && (
+        <EnvVarsView mapId={mapId} nodes={data.architecture.nodes} />
+
       )}
+      {activeView === 'deployment' && <DeploymentView mapId={mapId} />}
+      {activeView === 'all' && <AllView mapId={mapId} data={data} onSystemUpdated={setData} />}
+      {activeView === 'json' && <JsonView data={data} />}
     </div>
   );
 }
