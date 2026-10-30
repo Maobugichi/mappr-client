@@ -1,0 +1,9 @@
+.controls :global(.react-flow__controls-button) {
+  width: 32px;
+  height: 32px;
+  border-bottom-color: var(--color-canvas-grid);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  fill: currentColor;
+}
+.controls :global(.react-flow__controls-button:hover) { background: var(--color-surface); }

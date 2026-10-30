@@ -7,6 +7,7 @@
   --color-surface-raised: #1c2836;
   --color-trace: #7dd3e8;
   --color-signal: #f5a623;
+  --color-severity-medium: #ff832b;
   --color-text: #edf2f7;
   --color-text-muted: #8ca0b3;
   --color-success: #4fbf8b;
@@ -26,6 +27,7 @@
   --motion-micro: 100ms; /* hover, subtle border/background changes */
   --motion-fast: 160ms; /* focus, selection, small reveals */
   --motion-standard: 240ms; /* ordinary panel and content transitions */
+  --motion-spatial: 280ms; /* measured button widths and workspace pill travel */
   --motion-structural: 400ms; /* genuine layout or representation changes */
   --motion-construction: 600ms; /* exceptional, multi-stage establishment */
 
@@ -68,6 +70,7 @@
 @media (prefers-reduced-motion: reduce) {
   :root {
     --motion-standard: 0ms;
+    --motion-spatial: 0ms;
     --motion-structural: 0ms;
     --motion-construction: 0ms;
     --motion-distance: 0px;
@@ -85,6 +88,7 @@
   --color-surface-raised: var(--color-surface-raised);
   --color-trace: var(--color-trace);
   --color-signal: var(--color-signal);
+  --color-severity-medium: var(--color-severity-medium);
   --color-text: var(--color-text);
   --color-text-muted: var(--color-text-muted);
   --color-success: var(--color-success);
@@ -173,4 +177,34 @@ body {
   text-align: right;
   color: var(--color-syntax-line-number);
   user-select: none;
+}
+
+/* Architecture labels cover connections without obscuring workspace controls. */
+.mappr-architecture-canvas .react-flow__edgelabel-renderer {
+  /* Above elevated edges (999/1000) and connection previews (1001).
+     This stays inside the viewport, below workspace controls and panels. */
+  z-index: 1002;
+}
+
+/* Inspector overlays the graph; node positions do not move. */
+.mappr-node-inspector {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(var(--motion-distance));
+  transition:
+    opacity var(--motion-standard) var(--motion-ease-exit),
+    transform var(--motion-standard) var(--motion-ease-exit),
+    visibility 0s linear var(--motion-standard);
+}
+
+.mappr-node-inspector[data-open="true"] {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateX(0);
+  transition:
+    opacity var(--motion-standard) var(--motion-ease-enter),
+    transform var(--motion-standard) var(--motion-ease-enter),
+    visibility 0s;
 }

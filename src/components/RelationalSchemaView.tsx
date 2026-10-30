@@ -1,194 +1,93 @@
-'use client';
+﻿'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { DatabaseIcon, DownloadIcon } from '@phosphor-icons/react';
-import type { RelationalDialect, RelationalSchemaRecord, RelationalTable } from '@/lib/api';
-import { ApiError, getRelationalSchema, getRelationalSchemaSql, runRelationalSchema } from '@/lib/api';
-import { downloadTextFile } from '@/lib/markdown-export';
+import type { RelationalDialect } from '@/lib/api';
+import { getRelationalSchema, getRelationalSchemaSql, runRelationalSchema } from '@/lib/api';
+import { useSchemaArtifact } from '@/lib/use-schema-artifact';
+import { ActionButton } from './ActionButton';
+import { MotionDisclosure } from './MotionDisclosure';
+import { SchemaExplorer } from './SchemaExplorer';
+import styles from './SchemaView.module.css';
 
 const DIALECT_LABEL: Record<RelationalDialect, string> = {
-  postgres: 'PostgreSQL',
-  mysql: 'MySQL',
-  sqlite: 'SQLite',
+  postgres: 'PostgreSQL', mysql: 'MySQL', sqlite: 'SQLite',
 };
 
 function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '');
-}
-
-function TableCard({ table }: { table: RelationalTable }) {
-  return (
-    <div className="rounded-lg border border-canvas-grid bg-surface-raised p-4">
-      <p className="font-mono text-sm font-semibold text-text">{table.tableName}</p>
-
-      <div className="mt-3 flex flex-col gap-1.5">
-        {table.columns.map((column) => (
-          <div
-            key={column.name}
-            className="flex flex-wrap items-center gap-2 border-t border-canvas-grid pt-1.5 font-mono text-[11px] first:border-t-0 first:pt-0"
-          >
-            <span className="text-text">{column.name}</span>
-            <span className="text-text-muted">
-              {column.type}
-              {column.type === 'enum' && column.enumValues && column.enumValues.length > 0
-                ? ` (${column.enumValues.join(', ')})`
-                : ''}
-            </span>
-            {column.primaryKey && (
-              <span className="rounded border border-signal/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-signal">
-                PK
-              </span>
-            )}
-            {!column.nullable && (
-              <span className="rounded border border-canvas-grid px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-text-muted">
-                Not null
-              </span>
-            )}
-            {column.references && (
-              <span className="text-trace">
-                → {column.references.table}.{column.references.column}
-              </span>
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
 export function RelationalSchemaView({ mapId, productName }: { mapId: string; productName: string }) {
-  const [schema, setSchema] = useState<RelationalSchemaRecord | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isRunning, setIsRunning] = useState(false);
-  const [isDownloading, setIsDownloading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    schema, isLoading, isRunning, isDownloading, isReloading, isWorking, error,
+    resultRevision, downloaded, runGeneration, runDownload, runReload,
+  } = useSchemaArtifact({
+    mapId, load: getRelationalSchema, generate: runRelationalSchema,
+    label: 'relational schema', exportError: 'Something went wrong rendering the SQL.',
+  });
   const [dialect, setDialect] = useState<RelationalDialect>('postgres');
+  const [lastAction, setLastAction] = useState<'load' | 'generate' | 'download'>('load');
 
-  // Same convention as ApiContractView — load any previously persisted
-  // schema on mount.
-  useEffect(() => {
-    let cancelled = false;
-    getRelationalSchema(mapId)
-      .then((existing) => {
-        if (cancelled) return;
-        setSchema(existing);
-      })
-      .catch((err) => {
-        console.error('Failed to load existing relational schema:', err);
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [mapId]);
-
-  const handleRun = useCallback(async () => {
-    setIsRunning(true);
-    setError(null);
-    try {
-      const result = await runRelationalSchema(mapId);
-      setSchema(result);
-    } catch (err) {
-      if (err instanceof ApiError) {
-        setError(err.body.message ?? err.body.error);
-      } else {
-        setError('Something went wrong generating the database schema.');
-      }
-    } finally {
-      setIsRunning(false);
-    }
-  }, [mapId]);
-
-  const handleDownload = useCallback(async () => {
+  const handleRun = (trigger: HTMLButtonElement) => {
+    if (lastAction === 'load' && error) return runReload(trigger);
+    setLastAction('generate');
+    return runGeneration(trigger);
+  };
+  const handleDownload = (trigger: HTMLButtonElement) => {
     if (!schema) return;
-    setIsDownloading(true);
-    setError(null);
-    try {
+    setLastAction('download');
+    return runDownload(trigger, async () => {
+      // SQL is rendered by the existing backend endpoint for the chosen engine.
       const sql = await getRelationalSchemaSql(mapId, dialect);
-      const filename = `${slugify(productName) || 'mappr-export'}-${dialect}-v${schema.version}.sql`;
-      downloadTextFile(filename, sql, 'application/sql');
-    } catch (err) {
-      if (err instanceof ApiError) {
-        setError(err.body.message ?? err.body.error);
-      } else {
-        setError('Something went wrong rendering the SQL.');
-      }
-    } finally {
-      setIsDownloading(false);
-    }
-  }, [mapId, dialect, schema, productName]);
+      return {
+        filename: `${slugify(productName) || 'mappr-export'}-${dialect}-v${schema.version}.sql`,
+        content: sql, mimeType: 'application/sql',
+      };
+    });
+  };
+  const pending = isLoading || isRunning || isReloading;
 
   return (
-    <div className="flex flex-col gap-4 rounded-lg border border-canvas-grid bg-canvas p-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="font-display text-base font-semibold text-text">Database Schema</p>
-          <p className="mt-1 font-body text-sm text-text-muted">
-            {schema
-              ? `Generated for v${schema.version} · ${schema.tables.length} table${schema.tables.length === 1 ? '' : 's'}`
-              : 'No schema generated for the current version yet.'}
+    <section className={styles.schemaView} aria-label="Relational Schema Explorer">
+      <header className={styles.header}>
+        <div className={styles.headingCopy}>
+          <p className={styles.eyebrow}>Relational schema</p>
+          <h2 className={styles.title}>Schema Explorer</h2>
+          <p role="status" aria-atomic="true" className={styles.version}>
+            {schema ? `Displayed schema v${schema.version} · ${schema.tables.length} table${schema.tables.length === 1 ? '' : 's'}`
+              : 'No relational schema is currently displayed.'}
           </p>
         </div>
-
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
-          {schema && (
-            <>
-              <select
-                value={dialect}
-                onChange={(e) => setDialect(e.target.value as RelationalDialect)}
-                className="rounded-full border border-canvas-grid bg-surface-raised px-3 py-2 font-mono text-xs uppercase tracking-wide text-text"
-              >
-                {Object.entries(DIALECT_LABEL).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={handleDownload}
-                disabled={isDownloading}
-                className="flex items-center gap-2 rounded-full border border-canvas-grid px-4 py-2 font-mono text-xs uppercase tracking-wide text-text-muted shadow-lg transition-colors hover:bg-surface-raised hover:text-text disabled:opacity-60"
-              >
-                <DownloadIcon size={14} weight="bold" />
-                {isDownloading ? 'Rendering…' : '.sql'}
-              </button>
-            </>
-          )}
-          <button
-            onClick={handleRun}
-            disabled={isRunning || isLoading}
-            className="flex items-center gap-2 rounded-full bg-signal px-4 py-2 font-mono text-xs uppercase tracking-wide text-canvas shadow-lg transition-opacity hover:opacity-90 disabled:opacity-60"
-          >
-            <DatabaseIcon size={14} weight="bold" />
-            {isRunning ? 'Generating…' : schema ? 'Regenerate' : 'Generate Schema'}
-          </button>
+        <div className={styles.actions}>
+          {schema && <>
+            <select value={dialect} aria-label="SQL dialect" disabled={isDownloading}
+              onChange={(event) => setDialect(event.target.value as RelationalDialect)} className={styles.engineSelect}>
+              {Object.entries(DIALECT_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+            <ActionButton data-schema-export compactPending variant="secondary" disabled={isWorking}
+              onClick={(event) => void handleDownload(event.currentTarget)}
+              state={isDownloading ? 'pending' : error && lastAction === 'download' ? 'error' : downloaded ? 'success' : 'idle'}
+              idleLabel="SQL export" pendingLabel={`Preparing ${DIALECT_LABEL[dialect]} SQL download`}
+              successLabel="Download SQL again" errorLabel="Retry SQL export" icon={<DownloadIcon size={14} weight="bold" />} />
+          </>}
+          <ActionButton data-schema-action compactPending disabled={isWorking}
+            onClick={(event) => void handleRun(event.currentTarget)}
+            state={pending ? 'pending' : error && lastAction !== 'download' ? 'error' : resultRevision > 0 && schema ? 'success' : 'idle'}
+            idleLabel={schema ? 'Regenerate' : 'Generate schema'}
+            pendingLabel={isLoading || isReloading ? 'Loading saved relational schema' : 'Generating relational schema'}
+            successLabel={schema ? 'Regenerate' : 'Generate schema'}
+            errorLabel={lastAction === 'load' ? 'Retry loading' : 'Retry generation'} icon={<DatabaseIcon size={14} weight="bold" />} />
         </div>
-      </div>
-
-      {error && (
-        <div className="rounded-lg border border-danger bg-surface px-4 py-2 font-body text-xs text-danger">
-          {error}
-        </div>
-      )}
-
-      {!isLoading && schema && schema.tables.length === 0 && (
-        <p className="font-body text-sm text-text-muted">
-          No tables were generated — try regenerating.
-        </p>
-      )}
-
-      {schema && schema.tables.length > 0 && (
-        <div className="flex flex-col gap-3">
-          {schema.tables.map((table) => (
-            <TableCard key={table.tableName} table={table} />
-          ))}
-        </div>
-      )}
-    </div>
+      </header>
+      <MotionDisclosure isOpen={Boolean(error)}><p role="alert" className={styles.error}>{error}</p></MotionDisclosure>
+      {schema ? schema.tables.length > 0 ? <SchemaExplorer mode="relational" items={schema.tables} />
+        : <p className={styles.empty}>No tables were generated. Regenerate to try again.</p>
+        : <p className={styles.empty}>Generated table definitions will appear here.</p>}
+      <p className="sr-only" role="status" aria-atomic="true">
+        {isRunning ? `Generating a relational schema. ${schema ? `Displayed v${schema.version} remains available.` : ''}`
+          : downloaded ? 'SQL download prepared.' : ''}
+      </p>
+    </section>
   );
 }

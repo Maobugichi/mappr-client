@@ -1,0 +1,19 @@
+.inventory { container-type: inline-size; width: 100%; max-width: 72rem; min-width: 0; }
+.header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 12px 24px; margin-bottom: 16px; }
+.eyebrow { margin-bottom: 4px; color: var(--color-text-muted); font: 10px/1.5 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; }
+.title { color: var(--color-text); font: 600 20px/1.4 var(--font-display); }
+.count { color: var(--color-text-muted); font: var(--text-xs)/1.6 var(--font-mono); }
+.technologies { border-top: 1px solid var(--color-canvas-grid); }
+.technology { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 8px; min-width: 0; padding-block: 20px; border-bottom: 1px solid var(--color-canvas-grid); }
+.identity { display: grid; grid-template-columns: 32px minmax(0, 1fr); align-items: start; gap: 12px; min-width: 0; }
+.identityCopy { min-width: 0; }
+/* White monochrome brand marks retain their unmodified catalog paths. */
+.logo { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; color: white; }
+.name { color: var(--color-text); font: 600 var(--text-base)/1.5 var(--font-display); overflow-wrap: anywhere; }
+.role { margin-top: 4px; color: var(--color-trace); font: var(--text-xs)/1.6 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.rationale { min-width: 0; color: var(--color-text-muted); font: var(--text-sm)/1.75 var(--font-body); white-space: pre-wrap; overflow-wrap: anywhere; }
+.empty { color: var(--color-text-muted); font: var(--text-sm)/1.75 var(--font-body); }
+/* Narrow workspaces show the description directly beneath its name and role. */
+@container (min-width: 640px) {
+  .technology { grid-template-columns: minmax(0, 7fr) minmax(0, 13fr); column-gap: 24px; }
+}

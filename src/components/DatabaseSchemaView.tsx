@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { MapprSystem } from '@/lib/api';
 import { RelationalSchemaView } from './RelationalSchemaView';
 import { DocumentSchemaView } from './DocumentSchemaView';
+import styles from './SchemaView.module.css';
 
 type SchemaTarget = 'relational' | 'document';
 
@@ -20,7 +21,7 @@ function guessTarget(techStack: MapprSystem['techStack']): SchemaTarget {
   return looksDocument ? 'document' : 'relational';
 }
 
-export function DatabaseSchemaView({
+function DatabaseSchemaContent({
   mapId,
   productName,
   techStack,
@@ -30,30 +31,43 @@ export function DatabaseSchemaView({
   techStack: MapprSystem['techStack'];
 }) {
   const [target, setTarget] = useState<SchemaTarget>(() => guessTarget(techStack));
+  const [visited, setVisited] = useState<SchemaTarget[]>([target]);
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex gap-1">
+    <div className={styles.schemaRoot}>
+      <div role="group" aria-label="Schema type" className={styles.modes}>
         {(['relational', 'document'] as const).map((option) => (
           <button
             key={option}
-            onClick={() => setTarget(option)}
-            className={`rounded-full px-3 py-1.5 font-mono text-xs capitalize transition-colors ${
-              target === option
-                ? 'bg-signal text-canvas'
-                : 'text-text-muted hover:bg-surface-raised hover:text-text'
-            }`}
+            type="button"
+            onClick={() => {
+              setTarget(option);
+              setVisited((current) => current.includes(option) ? current : [...current, option]);
+            }}
+            aria-pressed={target === option}
+            className={styles.modeButton}
           >
             {option}
           </button>
         ))}
       </div>
 
-      {target === 'relational' ? (
+      {/* Load a mode on its first visit; retain its schema, selection and engine
+          when hidden. Switching presentation never starts generation. */}
+      {visited.includes('relational') && <div hidden={target !== 'relational'}>
         <RelationalSchemaView mapId={mapId} productName={productName} />
-      ) : (
+      </div>}
+      {visited.includes('document') && <div hidden={target !== 'document'}>
         <DocumentSchemaView mapId={mapId} productName={productName} />
-      )}
+      </div>}
     </div>
   );
+}
+
+export function DatabaseSchemaView(props: {
+  mapId: string;
+  productName: string;
+  techStack: MapprSystem['techStack'];
+}) {
+  return <DatabaseSchemaContent key={props.mapId} {...props} />;
 }

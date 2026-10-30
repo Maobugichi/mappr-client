@@ -9,6 +9,8 @@ type Connection = {
 };
 
 type NodeInspectorProps = {
+  isOpen?: boolean;
+  className?: string;
   label: string;
   type: string;
   description?: string;
@@ -17,6 +19,8 @@ type NodeInspectorProps = {
 };
 
 export function NodeInspector({
+  isOpen = true,
+  className = 'inset-y-0',
   label,
   type,
   description,
@@ -24,16 +28,28 @@ export function NodeInspector({
   onClose,
 }: NodeInspectorProps) {
   return (
-    <div className="absolute right-0 top-0 h-full w-80 overflow-y-auto border-l border-canvas-grid bg-surface p-5">
+    <aside
+      className={`mappr-node-inspector absolute right-0 z-10 w-80 max-w-full overflow-y-auto border-l border-canvas-grid bg-surface p-5 [overflow-wrap:anywhere] ${className}`}
+      data-open={isOpen}
+      aria-label="Node inspector"
+      aria-hidden={!isOpen}
+      inert={!isOpen}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.stopPropagation();
+          onClose();
+        }
+      }}
+    >
       <div className="mb-4 flex items-start justify-between gap-2">
-        <div>
+        <div className="min-w-0">
           <p className="font-mono text-[10px] uppercase tracking-wide text-text-muted">{type}</p>
           <h3 className="font-display text-lg font-semibold text-text">{label}</h3>
         </div>
         <button
           onClick={onClose}
           aria-label="Close inspector"
-          className="rounded p-1 text-text-muted hover:bg-surface-raised hover:text-text"
+          className="shrink-0 rounded p-1 text-text-muted hover:bg-surface-raised hover:text-text"
         >
           <XIcon size={16} />
         </button>
@@ -60,6 +76,6 @@ export function NodeInspector({
           </ul>
         </div>
       )}
-    </div>
+    </aside>
   );
 }

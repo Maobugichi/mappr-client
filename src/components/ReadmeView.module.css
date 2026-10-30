@@ -1,0 +1,20 @@
+.results {
+  animation: reveal var(--motion-standard) var(--motion-ease-enter);
+}
+
+.preview {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(var(--motion-distance));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

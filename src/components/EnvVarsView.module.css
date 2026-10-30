@@ -1,0 +1,22 @@
+.results {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  animation: reveal var(--motion-standard) var(--motion-ease-enter);
+}
+
+.results p,
+.results span {
+  min-width: 0;
+  max-width: 100%;
+}
+
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(var(--motion-distance));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

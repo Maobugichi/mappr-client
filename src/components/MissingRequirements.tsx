@@ -1,170 +1,124 @@
 'use client';
 
-import { XIcon } from '@phosphor-icons/react';
+import { ArrowRightIcon, CaretDownIcon } from '@phosphor-icons/react';
+import { useId, useLayoutEffect, useRef, type ReactNode } from 'react';
 import type { FindingSeverity, MissingRequirement, RequirementCategory } from '@/lib/api';
+import { OverviewDisclosure } from './OverviewDisclosure';
+import styles from './Overview.module.css';
 
-const SEVERITY_LABEL: Record<FindingSeverity, string> = {
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-  critical: 'Critical',
-};
-
-// Matches the token choices in ArchitectureNode.tsx/ArchitectureReview.tsx
-// so severity reads the same way across both review types.
 const SEVERITY_DOT: Record<FindingSeverity, string> = {
-  low: 'bg-trace',
-  medium: 'bg-signal',
-  high: 'bg-danger',
-  critical: 'bg-danger',
+  low: 'bg-trace', medium: 'bg-severity-medium', high: 'bg-danger', critical: 'bg-danger',
 };
-
 const CATEGORY_LABEL: Record<RequirementCategory, string> = {
-  auth: 'Auth',
-  data_integrity: 'Data Integrity',
-  error_handling: 'Error Handling',
-  compliance: 'Compliance',
-  notifications: 'Notifications',
-  edge_case: 'Edge Case',
-  non_functional: 'Non-Functional',
-  other: 'Other',
+  auth: 'Auth', data_integrity: 'Data Integrity', error_handling: 'Error Handling',
+  compliance: 'Compliance', notifications: 'Notifications', edge_case: 'Edge Case',
+  non_functional: 'Non-Functional', other: 'Other',
 };
-
 const SEVERITY_ORDER: FindingSeverity[] = ['critical', 'high', 'medium', 'low'];
 
-type MissingRequirementsProps = {
+export function MissingRequirements({
+  findings, activeFindingId, onSelectFinding, onDismissFinding, isRunning,
+  disabled, hasReview, error, action, featureNames, onRevealFeature,
+}: {
   findings: MissingRequirement[];
   activeFindingId: string | null;
   onSelectFinding: (findingId: string | null) => void;
   onDismissFinding: (findingId: string, dismissed: boolean) => void;
-  onClose: () => void;
   isRunning: boolean;
-};
-
-export function MissingRequirements({
-  findings,
-  activeFindingId,
-  onSelectFinding,
-  onDismissFinding,
-  onClose,
-  isRunning,
-}: MissingRequirementsProps) {
-  const active = findings.filter((f) => !f.dismissed);
-  const dismissed = findings.filter((f) => f.dismissed);
-  const sorted = [...active].sort(
-    (a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity)
-  );
+  disabled: boolean;
+  hasReview: boolean;
+  error: string | null;
+  action: ReactNode;
+  featureNames: Map<string, string>;
+  onRevealFeature: (featureId: string) => void;
+}) {
+  const panelRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    const measure = () => {
+      const top = parseFloat(getComputedStyle(panel).getPropertyValue('--overview-sticky-top')) || 24;
+      // Oversized panels stay in document flow; never add a nested scroller.
+      panel.dataset.fitsViewport = String(panel.getBoundingClientRect().height <= window.innerHeight - top - 16);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(panel);
+    window.addEventListener('resize', measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, []);
+  const findingIdPrefix = useId();
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const handleDismiss = (trigger: HTMLButtonElement, findingId: string, dismissed: boolean) => {
+    // The action leaves the document after dismissal/restore. Move focus to
+    // the stable heading before its contents become inert or unmount.
+    if (document.activeElement === trigger) headingRef.current?.focus({ preventScroll: true });
+    onDismissFinding(findingId, dismissed);
+  };
+  const active = findings.filter((finding) => !finding.dismissed);
+  const dismissed = findings.filter((finding) => finding.dismissed);
+  const sorted = [...active].sort((a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity));
 
   return (
-    <div className="w-full rounded-lg border border-canvas-grid bg-surface p-5">
-      <div className="mb-4 flex items-start justify-between gap-2">
+    <section ref={panelRef} aria-labelledby={`${findingIdPrefix}-heading`} aria-busy={isRunning} className={styles.requirements}>
+      <div className={styles.sectionHeader}>
         <div>
-          <p className="font-mono text-[10px] uppercase tracking-wide text-text-muted">
-            Requirements Check
-          </p>
-          <h3 className="font-display text-lg font-semibold text-text">
-            {isRunning
-              ? 'Running…'
-              : `${active.length} gap${active.length === 1 ? '' : 's'} found`}
-          </h3>
+          <p className={styles.eyebrow}>What needs attention</p>
+          <h2 id={`${findingIdPrefix}-heading`} ref={headingRef} tabIndex={-1} className={styles.sectionTitle}>Requirements gaps</h2>
         </div>
-        <button
-          onClick={onClose}
-          aria-label="Close requirements check"
-          className="rounded p-1 text-text-muted hover:bg-surface-raised hover:text-text"
-        >
-          <XIcon size={16} />
-        </button>
+        {action}
       </div>
-
-      {isRunning && (
-        <p className="font-body text-sm text-text-muted">
-          Checking the feature set for missing auth flows, error handling, edge cases, and
-          related gaps…
-        </p>
-      )}
-
-      {!isRunning && sorted.length === 0 && (
-        <p className="font-body text-sm text-text-muted">
-          No open gaps. Nothing here is currently flagged.
-        </p>
-      )}
-
-      <ul className="flex flex-col gap-3">
+      <p className={styles.sectionHint}>Findings in the stated feature set. Open a gap to review its suggestion.</p>
+      {error && <p role="alert" className={styles.error}>{error}</p>}
+      {!hasReview && !isRunning && <p className={styles.empty}>Run a check to identify missing requirements.</p>}
+      {hasReview && sorted.length === 0 && <p className={styles.empty}>No open gaps. Nothing here is currently flagged.</p>}
+      <ul className={styles.findings}>
         {sorted.map((finding) => {
           const isActive = finding.id === activeFindingId;
           return (
-            <li
-              key={finding.id}
-              onClick={() => onSelectFinding(isActive ? null : finding.id)}
-              className={`cursor-pointer rounded-lg border px-3 py-3 transition-colors ${
-                isActive
-                  ? 'border-signal bg-surface-raised'
-                  : 'border-canvas-grid hover:bg-surface-raised'
-              }`}
-            >
-              <div className="mb-1 flex items-center gap-2">
-                <span className={`h-2 w-2 rounded-full ${SEVERITY_DOT[finding.severity]}`} />
-                <span className="font-mono text-[10px] uppercase tracking-wide text-text-muted">
-                  {SEVERITY_LABEL[finding.severity]} · {CATEGORY_LABEL[finding.category]}
+            <li key={finding.id} className={styles.finding} data-expanded={isActive}>
+              <button type="button" onClick={() => onSelectFinding(isActive ? null : finding.id)}
+                disabled={isRunning} aria-expanded={isActive} aria-controls={`${findingIdPrefix}-${finding.id}`}
+                className={styles.findingTrigger}>
+                <span className={styles.findingCopy}>
+                  <span className={styles.findingMeta}>
+                    <span aria-hidden="true" className={`${styles.findingDot} ${SEVERITY_DOT[finding.severity]}`} />
+                    {finding.severity} · {CATEGORY_LABEL[finding.category]}
+                  </span>
+                  <span className={styles.findingTitle}>{finding.title}</span>
                 </span>
-              </div>
-
-              <p className="font-display text-sm font-medium text-text">{finding.title}</p>
-              <p className="mt-1 font-body text-xs text-text-muted">{finding.description}</p>
-
-              {isActive && (
-                <div className="mt-3 border-t border-canvas-grid pt-3">
-                  <p className="mb-1 font-mono text-[10px] uppercase tracking-wide text-trace">
-                    Suggested feature
-                  </p>
-                  <p className="font-display text-xs font-semibold text-text">
-                    {finding.suggestedFeature.name}
-                  </p>
-                  <p className="mt-0.5 font-body text-xs text-text-muted">
-                    {finding.suggestedFeature.description}
-                  </p>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDismissFinding(finding.id, true);
-                    }}
-                    className="mt-3 rounded-full border border-canvas-grid px-3 py-1 font-mono text-[10px] uppercase tracking-wide text-text-muted hover:bg-surface hover:text-text"
-                  >
-                    Dismiss
-                  </button>
+                <CaretDownIcon size={14} aria-hidden="true" className={styles.chevron} data-open={isActive} />
+              </button>
+              <OverviewDisclosure isOpen={isActive} id={`${findingIdPrefix}-${finding.id}`}>
+                <div className={styles.findingDetails}>
+                  <p className={styles.detailText}>{finding.description}</p>
+                  <div className={styles.suggestion}>
+                    <h3 className={styles.eyebrow}>Suggested feature</h3>
+                    <span className={styles.componentName}>{finding.suggestedFeature.name}</span>
+                    <p className={styles.detailText}>{finding.suggestedFeature.description}</p>
+                  </div>
+                  {finding.relatedFeatureIds.length > 0 && <ul aria-label="Related capabilities" className={styles.dependencyList}>
+                    {finding.relatedFeatureIds.map((id) => <li key={id}>{featureNames.has(id)
+                      ? <button type="button" onClick={() => onRevealFeature(id)}><ArrowRightIcon size={12} aria-hidden="true" />{featureNames.get(id)}</button>
+                      : <span>{id}</span>}</li>)}
+                  </ul>}
+                  <button type="button" disabled={disabled} onClick={(event) => handleDismiss(event.currentTarget, finding.id, true)} className={styles.dismiss}>Dismiss</button>
                 </div>
-              )}
+              </OverviewDisclosure>
             </li>
           );
         })}
       </ul>
-
-      {dismissed.length > 0 && (
-        <div className="mt-5 border-t border-canvas-grid pt-4">
-          <p className="mb-2 font-mono text-[10px] uppercase tracking-wide text-text-muted">
-            Dismissed ({dismissed.length})
-          </p>
-          <ul className="flex flex-col gap-2">
-            {dismissed.map((finding) => (
-              <li
-                key={finding.id}
-                className="flex items-center justify-between gap-2 rounded bg-surface-raised px-3 py-2"
-              >
-                <span className="font-body text-xs text-text-muted line-through">
-                  {finding.title}
-                </span>
-                <button
-                  onClick={() => onDismissFinding(finding.id, false)}
-                  className="shrink-0 font-mono text-[10px] uppercase tracking-wide text-trace hover:underline"
-                >
-                  Restore
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
+      {dismissed.length > 0 && <div className={styles.dismissed}>
+        <h3 className={styles.eyebrow}>Dismissed ({dismissed.length})</h3>
+        <ul>{dismissed.map((finding) => <li key={finding.id}>
+          <span>{finding.title}</span>
+          <button type="button" disabled={disabled} onClick={(event) => handleDismiss(event.currentTarget, finding.id, false)}>Restore</button>
+        </li>)}</ul>
+      </div>}
+    </section>
   );
 }

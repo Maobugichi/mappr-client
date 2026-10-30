@@ -1,0 +1,33 @@
+:global(html):has(.canvas) { scrollbar-gutter: stable; }
+.canvas { height: calc(clamp(420px, calc(100dvh - 320px), 680px) + 80px); }
+.reviewAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  min-height: 40px;
+  padding: 8px 16px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 9999px;
+  background: var(--color-signal);
+  color: var(--color-canvas);
+  font-size: 12px;
+  line-height: 16px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: width var(--motion-spatial) var(--motion-ease-standard),
+    border-color var(--motion-fast) var(--motion-ease-standard);
+}
+.reviewAction:enabled:hover { opacity: 0.9; }
+.reviewAction:disabled { cursor: wait; }
+.reviewAction[data-state='pending'] { padding-inline: 0; }
+.reviewAction[data-state='error'] { border-color: var(--color-danger); }
+.reviewActionContent { display: inline-flex; flex: none; align-items: center; gap: 8px; white-space: nowrap; }
+.reviewSpinner { flex: none; animation: reviewSpin calc(var(--motion-construction) * 1.5) linear infinite; }
+@keyframes reviewSpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .reviewAction { transition: none; }
+  .reviewSpinner { animation: none; }
+}

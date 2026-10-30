@@ -1,0 +1,57 @@
+.scroller {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 4px 2px 10px;
+  border-bottom: 1px solid var(--color-canvas-grid);
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-trace) transparent;
+}
+.track {
+  position: relative;
+  display: flex;
+  gap: 4px;
+  width: max-content;
+  font-size: 12px;
+  line-height: 16px;
+}
+.tab, .pillLabels > span {
+  flex: none;
+  padding: 6px 12px;
+  border-radius: 9999px;
+  white-space: nowrap;
+}
+.tab {
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: background-color var(--motion-micro) var(--motion-ease-standard);
+}
+.tab:hover { background: var(--color-surface-raised); color: var(--color-text); }
+.tab:focus-visible { outline-offset: 2px; }
+.pill {
+  position: absolute;
+  inset: 0 auto auto 0;
+  z-index: 1;
+  display: none;
+  width: var(--pill-width);
+  height: var(--pill-height);
+  transform: translateX(var(--pill-x));
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: 9999px;
+  background: var(--color-signal);
+  transition: transform var(--motion-spatial) var(--motion-ease-standard),
+    width var(--motion-spatial) var(--motion-ease-standard);
+}
+.pill[data-ready='true'] { display: block; }
+.pillLabels {
+  display: flex;
+  gap: 4px;
+  width: max-content;
+  color: var(--color-canvas);
+  transform: translateX(calc(-1 * var(--pill-x)));
+  transition: transform var(--motion-spatial) var(--motion-ease-standard);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pill, .pillLabels { transition: none; }
+}

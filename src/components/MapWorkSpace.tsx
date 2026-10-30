@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import type { MapprSystem } from '@/lib/api';
 import { ArchitectureCanvas } from './ArchitectureCanvas';
 import { DatabaseCanvas } from './DatabaseCanvas';
@@ -15,7 +15,8 @@ import { ReadmeView } from './ReadmeView';
 import { EnvVarsView } from './EnvVarsView';
 import { DeploymentView } from './DeploymentView';
 import { AllView } from './AllView';
-import { JsonView } from './JsonView'
+import { JsonView } from './JsonView';
+import { WorkspaceTabs } from './WorkspaceTabs';
 
 type ViewId =
   | 'overview'
@@ -51,9 +52,9 @@ const VIEWS: { id: ViewId; label: string }[] = [
 ];
 
 export function MapWorkspace({ mapId, data: initialData }: { mapId: string; data: MapprSystem }) {
-  // Defaults to Architecture rather than Overview — it's the one view
-  // that's actually finished, so that's what a first-time viewer should
-  // land on rather than a placeholder.
+  const workspaceId = useId();
+  // Arrow keys move focus; Enter/Space activates a view. Moving through the
+  // tab list must not mount views or start their saved-artifact requests.
   const [activeView, setActiveView] = useState<ViewId>('architecture');
 
   // Lifted into state (rather than read directly from the prop) so that
@@ -62,24 +63,8 @@ export function MapWorkspace({ mapId, data: initialData }: { mapId: string; data
   // other view (JSON, All, etc.) without a full page reload.
   const [data, setData] = useState<MapprSystem>(initialData);
 
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap gap-1 border-b border-canvas-grid pb-2">
-        {VIEWS.map((view) => (
-          <button
-            key={view.id}
-            onClick={() => setActiveView(view.id)}
-            className={`rounded-full px-3 py-1.5 font-mono text-xs transition-colors ${
-              activeView === view.id
-                ? 'bg-signal text-canvas'
-                : 'text-text-muted hover:bg-surface-raised hover:text-text'
-            }`}
-          >
-            {view.label}
-          </button>
-        ))}
-      </div>
-
+  const activeContent = (
+    <>
       {activeView === 'overview' && (
         <Overview
           mapId={mapId}
@@ -123,6 +108,26 @@ export function MapWorkspace({ mapId, data: initialData }: { mapId: string; data
       {activeView === 'deployment' && <DeploymentView mapId={mapId} />}
       {activeView === 'all' && <AllView mapId={mapId} data={data} onSystemUpdated={setData} />}
       {activeView === 'json' && <JsonView data={data} />}
+    </>
+  );
+
+  return (
+    <div className="flex flex-col gap-4">
+      <WorkspaceTabs views={VIEWS} activeView={activeView} workspaceId={workspaceId} onActivate={setActiveView} />
+
+      {VIEWS.map((view) => (
+        <div
+          key={view.id}
+          id={`${workspaceId}-panel-${view.id}`}
+          role="tabpanel"
+          aria-labelledby={`${workspaceId}-tab-${view.id}`}
+          hidden={activeView !== view.id}
+          tabIndex={activeView === view.id ? 0 : -1}
+          className="min-w-0"
+        >
+          {activeView === view.id ? activeContent : null}
+        </div>
+      ))}
     </div>
   );
 }

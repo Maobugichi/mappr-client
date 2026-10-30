@@ -1,0 +1,36 @@
+/* Closed content is inert immediately; visibility waits for the exit.
+   Interrupted CSS transitions reverse from the current visual position. */
+.disclosure {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(var(--motion-distance));
+  transition:
+    grid-template-rows var(--motion-standard) var(--motion-ease-exit),
+    opacity var(--motion-standard) var(--motion-ease-exit),
+    transform var(--motion-standard) var(--motion-ease-exit),
+    margin-bottom var(--motion-standard) var(--motion-ease-exit),
+    visibility 0s linear var(--motion-standard);
+}
+
+.disclosure[data-open='true'] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0);
+  transition:
+    grid-template-rows var(--motion-standard) var(--motion-ease-enter),
+    opacity var(--motion-standard) var(--motion-ease-enter),
+    transform var(--motion-standard) var(--motion-ease-enter),
+    margin-bottom var(--motion-standard) var(--motion-ease-enter),
+    visibility 0s;
+}
+
+.content {
+  display: flow-root;
+  min-height: 0;
+  overflow: hidden;
+}

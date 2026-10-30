@@ -1,0 +1,17 @@
+.processing {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 3rem;
+}
+.orbit {
+  flex: none;
+  color: var(--color-trace);
+  animation: orbit calc(var(--motion-construction) * 2) linear infinite;
+}
+.compact { min-height: 1.25rem; gap: 0.5rem; }
+.copy { min-width: 0; overflow-wrap: anywhere; }
+@keyframes orbit { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .orbit { animation: none; }
+}

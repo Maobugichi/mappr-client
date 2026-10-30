@@ -388,19 +388,33 @@ export type EnvVarSetRecord = {
 
 
 // Mirrors backend/src/schema/deployment.ts (the Zod schema).
-export type DeploymentManagement = 'managed' | 'self_managed';
+export type DeploymentComponentKind =
+  | 'application'
+  | 'managed_resource'
+  | 'external_service'
+  | 'embedded';
 
 export type DeploymentExposure = 'public' | 'internal';
 
-export type DeploymentComponent = {
-  nodeId: string;
-  runsOn: string;
-  management: DeploymentManagement;
+// null on a component for an external service or embedded component,
+// where scaling/health/backup have no real answer.
+export type DeploymentOperations = {
   exposure: DeploymentExposure;
   scaling: string;
   healthCheck: string;
-  // null for a stateless component with no data of its own to back up.
+  // null for a stateless component.
   backup: string | null;
+};
+
+export type DeploymentComponent = {
+  nodeId: string;
+  kind: DeploymentComponentKind;
+  platform: string;
+  steps: string[];
+  verify: string;
+  rollback: string | null;
+  operations: DeploymentOperations | null;
+  hostNodeId: string | null;
 };
 
 export type DeploymentEnvironment = { name: string; purpose: string };
@@ -414,6 +428,8 @@ export type DeploymentRecord = {
   components: DeploymentComponent[];
   environments: DeploymentEnvironment[];
   cicdSteps: string[];
+  // How and when database migrations are applied; null if there's no database.
+  migrations: string | null;
   createdAt: string;
   updatedAt: string;
 };
