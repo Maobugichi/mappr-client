@@ -1,10 +1,12 @@
 'use client';
 
-import { useRef } from 'react';
+import { useMemo, useRef } from 'react';
 import { DownloadIcon, RocketLaunchIcon } from '@phosphor-icons/react';
 import { getDeployment, getDeploymentMarkdown, runDeployment } from '@/lib/api';
-import { MarkdownContent } from '@/lib/markdown-render';
+import { prepareDeploymentDocument } from '@/lib/deployment-runbook';
 import { useGeneratedArtifact } from '@/lib/use-generated-artifact';
+import { ActionButton } from './ActionButton';
+import { DeploymentMarkdown } from './DeploymentMarkdown';
 import { MotionDisclosure } from './MotionDisclosure';
 import styles from './DeploymentView.module.css';
 
@@ -27,13 +29,16 @@ function DeploymentContent({ mapId }: { mapId: string }) {
   const generateTriggerRef = useRef<HTMLButtonElement>(null);
   const {
     record: preview, isLoading, isRunning, isDownloading, isReloading, isWorking, error,
-    resultRevision, downloaded, runGeneration, runDownload, runReload,
+    downloaded, runGeneration, runDownload, runReload,
   } = useGeneratedArtifact({
     mapId, load: loadDeploymentPreview, generate: generateDeploymentPreview,
     loadError: 'Could not load the saved deployment plan. Retry loading, or generate a new plan.',
     generationError: 'Could not generate the deployment plan and load its preview. Retry loading to check the saved plan, or try generating again.',
     exportError: 'Could not prepare the deployment plan download.',
   });
+  const markdown = preview?.markdown;
+  const runbook = useMemo(() => markdown === undefined ? null : prepareDeploymentDocument(markdown), [markdown]);
+  const pending = isLoading || isRunning || isReloading;
 
   // Export the exact displayed Markdown, including backend-rendered
   // connections and uncovered nodes, without another request.
@@ -64,38 +69,31 @@ function DeploymentContent({ mapId }: { mapId: string }) {
   } else if (error) statusMessage = 'No deployment plan is currently displayed.';
 
   return (
-    <div className="flex flex-col gap-4 rounded-lg border border-canvas-grid bg-canvas p-6">
+    <section className={styles.workspace} aria-label="Deployment runbook">
       <div>
         <div className="flex flex-col items-start justify-between gap-4 lg:flex-row">
           <div className="min-w-0">
-            <p className="font-display text-base font-semibold text-text">Deployment Plan</p>
-            <p role="status" aria-atomic="true" className="mt-1 font-body text-sm text-text-muted">
-              {statusMessage}
-            </p>
+            <h2 className="font-display text-base font-semibold text-text">Deployment Runbook</h2>
+            {preview && <p className={styles.summary}>{preview.record.components.length} component{preview.record.components.length === 1 ? '' : 's'} planned</p>}
+            <p role="status" aria-atomic="true" className="sr-only">{statusMessage}</p>
           </div>
 
           <div className="flex w-full shrink-0 flex-wrap items-center gap-2 lg:w-auto">
             {preview && (
-              <button
+              <ActionButton compactPending variant="secondary"
                 onClick={(event) => void handleDownload(event.currentTarget)}
-                disabled={isWorking}
-                aria-busy={isDownloading}
-                className="flex items-center gap-2 rounded-full border border-canvas-grid px-4 py-2 font-mono text-xs uppercase tracking-wide text-text-muted shadow-lg transition-colors hover:bg-surface-raised hover:text-text disabled:opacity-60"
-              >
-                <DownloadIcon size={14} weight="bold" />
-                {isDownloading ? 'Preparing…' : 'DEPLOYMENT.md'}
-              </button>
+                disabled={isWorking || isLoading}
+                idleLabel="Markdown export" pendingLabel="Preparing deployment download"
+                icon={<DownloadIcon size={14} weight="bold" />} />
             )}
-            <button
+            <ActionButton compactPending
               ref={generateTriggerRef}
               onClick={(event) => void runGeneration(event.currentTarget)}
               disabled={isWorking || isLoading}
-              aria-busy={isRunning || isReloading}
-              className="flex items-center gap-2 rounded-full bg-signal px-4 py-2 font-mono text-xs uppercase tracking-wide text-canvas shadow-lg transition-opacity hover:opacity-90 disabled:opacity-60"
-            >
-              <RocketLaunchIcon size={14} weight="bold" />
-              {isLoading || isReloading ? 'Loading…' : isRunning ? 'Generating…' : preview ? 'Regenerate' : 'Generate Plan'}
-            </button>
+              state={pending ? 'pending' : 'idle'}
+              idleLabel={preview ? 'Regenerate' : 'Generate Plan'}
+              pendingLabel={isLoading || isReloading ? 'Loading saved deployment plan' : 'Generating deployment plan and preparing its preview'}
+              icon={<RocketLaunchIcon size={14} weight="bold" />} />
           </div>
         </div>
 
@@ -113,16 +111,14 @@ function DeploymentContent({ mapId }: { mapId: string }) {
         </MotionDisclosure>
       </div>
 
-      {preview && (
-        <div role="region" aria-label="Deployment plan preview" tabIndex={0} className={`${styles.preview} max-h-[70vh] overflow-auto rounded-lg border border-canvas-grid bg-surface-raised p-4`}>
-          <div key={resultRevision} className={styles.results}>
-            {preview.markdown.trim() ? <MarkdownContent markdown={preview.markdown} /> : (
+      {preview && runbook ? (
+        <article aria-label="Deployment instructions" className={styles.document}>
+            {preview.markdown.trim() ? <DeploymentMarkdown document={runbook} /> : (
               <p className="font-body text-sm text-text-muted">The deployment plan is empty. Try regenerating.</p>
             )}
-          </div>
-        </div>
-      )}
-    </div>
+        </article>
+      ) : !pending && !error && <p className={styles.summary}>{statusMessage}</p>}
+    </section>
   );
 }
 

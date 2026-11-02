@@ -1,11 +1,13 @@
 'use client';
 
-import { useRef } from 'react';
-import { FileTextIcon, DownloadIcon } from '@phosphor-icons/react';
+import { useId, useMemo, useRef, useState } from 'react';
+import { FileTextIcon, DownloadIcon, ListIcon } from '@phosphor-icons/react';
 import { getReadme, getReadmeMarkdown, runReadme } from '@/lib/api';
-import { MarkdownContent } from '@/lib/markdown-render';
+import { prepareReadmeDocument, type ReadmeDocument } from '@/lib/readme-markdown';
 import { useGeneratedArtifact } from '@/lib/use-generated-artifact';
+import { ActionButton } from './ActionButton';
 import { MotionDisclosure } from './MotionDisclosure';
+import { ReadmeMarkdown } from './ReadmeMarkdown';
 import styles from './ReadmeView.module.css';
 
 // Commit the record and its complete rendered Markdown together. A failed
@@ -23,20 +25,45 @@ async function generateReadmePreview(mapId: string) {
   return { record, markdown };
 }
 
+function ReadmeOutline({ headings }: { headings: ReadmeDocument['headings'] }) {
+  const outlineRef = useRef<HTMLDetailsElement>(null);
+  return <details ref={outlineRef} className={styles.outline} onKeyDown={(event) => {
+    if (event.key !== 'Escape' || !event.currentTarget.open) return;
+    event.preventDefault();
+    event.currentTarget.open = false;
+    event.currentTarget.querySelector('summary')?.focus();
+  }}>
+    <summary><ListIcon size={14} weight="bold" aria-hidden="true" />Outline</summary>
+    <nav aria-label="README outline">
+      <ol>{headings.map((heading) => <li key={heading.id} data-depth={heading.depth}>
+        <a href={'#' + encodeURIComponent(heading.id)} onClick={() => {
+          if (outlineRef.current) outlineRef.current.open = false;
+          document.getElementById(heading.id)?.focus({ preventScroll: true });
+        }}>{heading.text}</a>
+      </li>)}</ol>
+    </nav>
+  </details>;
+}
+
 function ReadmeContent({ mapId }: { mapId: string }) {
+  const documentId = useId();
   const generateTriggerRef = useRef<HTMLButtonElement>(null);
+  const [lastAction, setLastAction] = useState<'load' | 'generate' | 'download'>('load');
   const {
     record: preview, isLoading, isRunning, isDownloading, isReloading, isWorking, error,
-    resultRevision, downloaded, runGeneration, runDownload, runReload,
+    downloaded, runGeneration, runDownload, runReload,
   } = useGeneratedArtifact({
     mapId, load: loadReadmePreview, generate: generateReadmePreview,
     loadError: 'Could not load the saved README. Retry loading, or generate a new README.',
     generationError: 'Could not generate the README and load its preview. Retry loading to check the saved README, or try generating again.',
     exportError: 'Could not prepare the README download.',
   });
+  const markdown = preview?.markdown;
+  const document = useMemo(() => markdown === undefined ? null : prepareReadmeDocument(markdown, 'readme-' + documentId), [markdown, documentId]);
 
   const handleDownload = (trigger: HTMLButtonElement) => {
-    if (!preview) return;
+    if (!preview || isWorking || isLoading) return;
+    setLastAction('download');
     return runDownload(trigger, async () => ({
       filename: 'README.md', content: preview.markdown, mimeType: 'text/markdown',
     }));
@@ -46,9 +73,16 @@ function ReadmeContent({ mapId }: { mapId: string }) {
     // The error panel becomes inert as loading starts. Move focus to the
     // stable main action, which the controller can restore when it re-enables.
     const stableTrigger = generateTriggerRef.current ?? trigger;
-    if (document.activeElement === trigger) stableTrigger.focus({ preventScroll: true });
+    if (window.document.activeElement === trigger) stableTrigger.focus({ preventScroll: true });
+    setLastAction('load');
     return runReload(stableTrigger);
   };
+  const handleGenerate = (trigger: HTMLButtonElement) => {
+    if (isLoading || isWorking) return;
+    setLastAction('generate');
+    return runGeneration(trigger);
+  };
+  const pending = isLoading || isRunning || isReloading;
 
   let statusMessage = 'No README generated for the current version yet.';
   if (isLoading || isReloading) statusMessage = 'Loading saved README…';
@@ -60,65 +94,46 @@ function ReadmeContent({ mapId }: { mapId: string }) {
   else if (error) statusMessage = 'No README is currently displayed.';
 
   return (
-    <div className="flex flex-col gap-4 rounded-lg border border-canvas-grid bg-canvas p-6">
-      <div>
-        <div className="flex flex-col items-start justify-between gap-4 lg:flex-row">
-          <div className="min-w-0">
-            <p className="font-display text-base font-semibold text-text">README</p>
-            <p role="status" aria-atomic="true" className="mt-1 font-body text-sm text-text-muted">
-              {statusMessage}
-            </p>
-          </div>
-
-          <div className="flex w-full shrink-0 flex-wrap items-center gap-2 lg:w-auto">
-            {preview && (
-              <button
-                onClick={(event) => void handleDownload(event.currentTarget)}
-                disabled={isWorking}
-                aria-busy={isDownloading}
-                className="flex items-center gap-2 rounded-full border border-canvas-grid px-4 py-2 font-mono text-xs uppercase tracking-wide text-text-muted shadow-lg transition-colors hover:bg-surface-raised hover:text-text disabled:opacity-60"
-              >
-                <DownloadIcon size={14} weight="bold" />
-                {isDownloading ? 'Preparing…' : 'README.md'}
-              </button>
-            )}
-            <button
-              ref={generateTriggerRef}
-              onClick={(event) => void runGeneration(event.currentTarget)}
-              disabled={isWorking || isLoading}
-              aria-busy={isRunning || isReloading}
-              className="flex items-center gap-2 rounded-full bg-signal px-4 py-2 font-mono text-xs uppercase tracking-wide text-canvas shadow-lg transition-opacity hover:opacity-90 disabled:opacity-60"
-            >
-              <FileTextIcon size={14} weight="bold" />
-              {isLoading || isReloading ? 'Loading…' : isRunning ? 'Generating…' : preview ? 'Regenerate' : 'Generate README'}
-            </button>
-          </div>
+    <section className={styles.file} aria-label="Repository file preview">
+      <header className={styles.fileHeader}>
+        <div className={styles.fileIdentity}>
+          <FileTextIcon size={16} className={styles.fileIcon} aria-hidden="true" />
+          <h2>README.md</h2>
+          {preview && <span className={styles.version}>v{preview.record.version}</span>}
         </div>
-
-        <MotionDisclosure isOpen={Boolean(error)}>
-          <div className="mt-4 rounded-lg border border-danger bg-surface px-4 py-3 font-body text-xs text-danger">
+        <div className={styles.actions}>
+          {document && document.headings.length > 0 && <ReadmeOutline headings={document.headings} />}
+          {preview && <ActionButton compactPending variant="secondary" disabled={isWorking || isLoading}
+            onClick={(event) => void handleDownload(event.currentTarget)}
+            state={error && lastAction === 'download' ? 'error' : downloaded ? 'success' : 'idle'}
+            idleLabel="Markdown export" pendingLabel="Preparing README download" successLabel="Markdown export" errorLabel="Retry export"
+            icon={<DownloadIcon size={14} weight="bold" />} />}
+          <ActionButton ref={generateTriggerRef} compactPending disabled={isWorking || isLoading}
+            onClick={(event) => void handleGenerate(event.currentTarget)}
+            state={pending ? 'pending' : error && lastAction === 'generate' ? 'error' : 'idle'}
+            idleLabel={preview ? 'Regenerate' : 'Generate README'}
+            pendingLabel={isLoading || isReloading ? 'Loading saved README' : 'Generating README and preparing its preview'}
+            errorLabel="Retry generation" icon={<FileTextIcon size={14} weight="bold" />} />
+        </div>
+      </header>
+      <p role="status" aria-atomic="true" className="sr-only">{statusMessage}</p>
+      <MotionDisclosure isOpen={Boolean(error)}>
+          <div className={styles.error}>
             <p role="alert">{error}</p>
             <button
               onClick={(event) => void handleReload(event.currentTarget)}
               disabled={isWorking || isLoading}
-              className="mt-2 rounded-full border border-danger/40 px-3 py-1 font-mono text-[10px] uppercase tracking-wide hover:bg-danger/10 disabled:opacity-60"
+              className={styles.retry}
             >
               Retry loading
             </button>
           </div>
-        </MotionDisclosure>
-      </div>
-
-      {preview && (
-        <div role="region" aria-label="README preview" tabIndex={0} className={`${styles.preview} max-h-[70vh] overflow-auto rounded-lg border border-canvas-grid bg-surface-raised p-4`}>
-          <div key={resultRevision} className={styles.results}>
-            {preview.markdown.trim() ? <MarkdownContent markdown={preview.markdown} /> : (
-              <p className="font-body text-sm text-text-muted">The README is empty. Try regenerating.</p>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
+      </MotionDisclosure>
+      {document && preview ? <article className={styles.document} aria-label="README.md contents">
+        {preview.markdown.trim() ? <ReadmeMarkdown document={document} />
+          : <p className={styles.empty}>The README is empty. Try regenerating.</p>}
+      </article> : !pending && !error && <p className={styles.empty}>No README generated for the current version yet.</p>}
+    </section>
   );
 }
 

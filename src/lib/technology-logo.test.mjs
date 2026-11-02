@@ -6,6 +6,7 @@ import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { CodeIcon } from '@phosphor-icons/react/dist/csr/Code';
 import { TECHNOLOGY_LOGOS, resolveTechnologyLogo } from './technology-logo.ts';
 
 test('every supported brand and alias resolves to its exact catalog mark', () => {
@@ -69,7 +70,10 @@ test('inventory preserves every source entry and renders exactly one decorative 
     });
     return componentModule.exports;
   };
-  const logo = loadComponent('TechnologyLogo.tsx', { '@/lib/technology-logo': { resolveTechnologyLogo } });
+  const logo = loadComponent('TechnologyLogo.tsx', {
+    '@/lib/technology-logo': { resolveTechnologyLogo },
+    '@phosphor-icons/react': { CodeIcon },
+  });
   const { TechStackView } = loadComponent('TechStackView.tsx', { './TechnologyLogo': logo });
   const fixture = Object.freeze([
     { choice: 'Next.js on Vercel', category: 'Frontend', rationale: 'Keep every line.\nPreserve the complete generated rationale.' },

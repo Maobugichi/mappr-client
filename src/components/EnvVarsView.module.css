@@ -1,22 +1,45 @@
-.results {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  animation: reveal var(--motion-standard) var(--motion-ease-enter);
+.reference { min-width: 0; padding: 24px; border: 1px solid var(--color-canvas-grid); border-radius: 8px; background: var(--color-canvas); }
+.header { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 16px 24px; }
+.header > div { min-width: 0; }
+.header h2 { color: var(--color-text); font: 600 16px/1.5 var(--font-display); }
+.summary { margin-top: 4px; color: var(--color-text-muted); font: 13px/1.7 var(--font-body); }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; max-width: 100%; }
+.serviceNav { max-width: 100%; margin-top: 16px; padding-bottom: 8px; border-bottom: 1px solid var(--color-canvas-grid); overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; scrollbar-color: var(--color-trace) transparent; }
+.serviceNav ul { display: flex; gap: 4px; width: max-content; margin: 0; padding: 2px 0; list-style: none; }
+.serviceNav li { flex: none; }
+.serviceNav a { display: block; padding: 6px 10px; border-radius: 4px; color: var(--color-text-muted); font: 12px/1.6 var(--font-body); white-space: nowrap; transition: color var(--motion-fast) var(--motion-ease-standard), background-color var(--motion-fast) var(--motion-ease-standard); }
+.serviceNav a:hover { color: var(--color-signal); background: var(--color-surface); }
+.serviceNav a:focus-visible { outline: 2px solid var(--color-signal); outline-offset: -1px; }
+.sections { min-width: 0; margin-top: 20px; overflow-wrap: anywhere; }
+.service + .service { margin-top: 24px; }
+.serviceHeading { margin-bottom: 8px; color: var(--color-text-muted); font: 500 13px/1.6 var(--font-body); scroll-margin-top: 24px; }
+.variables { margin: 0; padding: 0; border-top: 1px solid var(--color-canvas-grid); list-style: none; }
+.variable { min-width: 0; padding: 12px 0; }
+.variable + .variable { border-top: 1px solid var(--color-canvas-grid); }
+.variableHeader { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; }
+.nameLine { display: flex; align-items: flex-start; gap: 6px; min-width: 0; max-width: 100%; }
+.variableName { min-width: 0; padding-block: 5px; color: var(--color-text); font: 500 14px/22px var(--font-mono); overflow-wrap: anywhere; }
+.labels { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; max-width: 100%; }
+.label { padding: 1px 6px; border: 1px solid var(--color-canvas-grid); border-radius: 4px; color: var(--color-text-muted); font: 500 11px/16px var(--font-body); }
+.label[data-secret='true'] { border-color: color-mix(in srgb, var(--color-danger) 35%, transparent); color: var(--color-danger); }
+.category { color: var(--color-text-muted); font: 12px/1.6 var(--font-body); overflow-wrap: anywhere; }
+.description { margin-top: 4px; color: var(--color-text-muted); font: 400 14px/1.65 var(--font-body); white-space: pre-wrap; overflow-wrap: anywhere; }
+.example { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 6px; min-width: 0; max-width: 100%; margin-top: 4px; }
+.exampleLabel, .withheld { padding-block: 4px; color: var(--color-text-muted); font: 12px/22px var(--font-body); }
+.exampleValue { min-width: 0; max-width: 100%; padding-block: 4px; color: var(--color-trace); font: 400 13px/22px var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.copyButton { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--color-text-muted); cursor: pointer; transition: color var(--motion-fast) var(--motion-ease-standard), border-color var(--motion-fast) var(--motion-ease-standard), background-color var(--motion-fast) var(--motion-ease-standard); }
+.copyButton:hover { border-color: var(--color-canvas-grid); background: var(--color-surface); color: var(--color-text); }
+.copyButton:focus-visible { outline: 2px solid var(--color-signal); outline-offset: 2px; }
+.copyButton[data-state='copied'] { color: var(--color-success); }
+.copyButton[data-state='failed'] { color: var(--color-danger); }
+.copyFeedback { margin-top: 4px; color: var(--color-success); font: 12px/1.6 var(--font-body); }
+.copyFeedback[data-state='failed'] { color: var(--color-danger); }
+.error { margin-top: 16px; padding-left: 12px; border-left: 2px solid var(--color-danger); color: var(--color-danger); font: 14px/1.7 var(--font-body); overflow-wrap: anywhere; }
+.empty { color: var(--color-text-muted); font: 14px/1.7 var(--font-body); }
+@media (max-width: 640px) {
+  .reference { padding: 16px; }
+  .header { gap: 12px; }
 }
-
-.results p,
-.results span {
-  min-width: 0;
-  max-width: 100%;
-}
-
-@keyframes reveal {
-  from {
-    opacity: 0;
-    transform: translateY(var(--motion-distance));
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+@media (prefers-reduced-motion: reduce) {
+  .serviceNav a, .copyButton { transition: none; }
 }

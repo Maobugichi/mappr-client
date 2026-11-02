@@ -1,168 +1,182 @@
 'use client';
 
-import { DownloadIcon, GearSixIcon } from '@phosphor-icons/react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { CheckIcon, CopyIcon, DownloadIcon, GearSixIcon, WarningIcon } from '@phosphor-icons/react';
 import type { EnvVar, MapprSystem } from '@/lib/api';
 import { getEnvVars, getEnvVarsFile, runEnvVars } from '@/lib/api';
+import { assertSafeEnvTemplate, envExamplePolicy, UnsafeEnvExampleError } from '@/lib/env-vars-reference';
 import { useGeneratedArtifact } from '@/lib/use-generated-artifact';
+import { ActionButton } from './ActionButton';
 import { MotionDisclosure } from './MotionDisclosure';
 import styles from './EnvVarsView.module.css';
 
 type Section = { key: string; title: string; vars: EnvVar[] };
 
-// Same grouping rule as the backend's envVarsRender.ts, so the cards
-// here match the sections in the downloaded file: shared variables (and
-// any pointing at a node that no longer exists) under "General", then
-// one section per architecture node that has variables.
+// Keep the backend's grouping rule: shared/orphaned variables under General,
+// followed by each architecture node with variables, in its original order.
 function groupIntoSections(vars: EnvVar[], nodes: MapprSystem['architecture']['nodes']): Section[] {
   const knownIds = new Set(nodes.map((n) => n.id));
   const sections: Section[] = [];
-
   const general = vars.filter((v) => v.nodeId === null || !knownIds.has(v.nodeId));
-  if (general.length > 0) {
-    sections.push({ key: 'general', title: 'General', vars: general });
-  }
-
+  if (general.length > 0) sections.push({ key: 'general', title: 'General', vars: general });
   for (const node of nodes) {
     const nodeVars = vars.filter((v) => v.nodeId === node.id);
-    if (nodeVars.length > 0) {
-      sections.push({ key: `node:${node.id}`, title: node.label, vars: nodeVars });
-    }
+    if (nodeVars.length > 0) sections.push({ key: `node:${node.id}`, title: node.label, vars: nodeVars });
   }
-
   return sections;
 }
 
 function EnvVarRow({ envVar }: { envVar: EnvVar }) {
-  return (
-    <div className="flex flex-col gap-1 border-t border-canvas-grid pt-2 first:border-t-0 first:pt-0">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-mono text-xs font-semibold text-text">{envVar.name}</span>
-        <span
-          className={`rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide ${
-            envVar.secret ? 'border-danger/40 text-danger' : 'border-canvas-grid text-text-muted'
-          }`}
-        >
-          {envVar.secret ? 'Secret' : 'Config'}
-        </span>
-        {!envVar.required && (
-          <span className="rounded border border-canvas-grid px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-text-muted">
-            Optional
-          </span>
-        )}
+  const feedbackId = useId();
+  const policy = envExamplePolicy(envVar);
+  const [result, setResult] = useState<{ variable: EnvVar; target: 'name' | 'example'; state: 'copied' | 'failed' } | null>(null);
+  const current = result?.variable === envVar ? result : null;
+  const pending = useRef(false);
+  const request = useRef(0);
+  const resetTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => {
+    request.current++;
+    pending.current = false;
+    window.clearTimeout(resetTimer.current);
+  }, [envVar]);
+
+  const copy = async (target: 'name' | 'example') => {
+    if (pending.current || (target === 'example' && !policy.canCopy)) return;
+    pending.current = true;
+    const currentRequest = ++request.current;
+    window.clearTimeout(resetTimer.current);
+    setResult(null);
+    try {
+      await navigator.clipboard.writeText(target === 'name' ? envVar.name : envVar.placeholder);
+      if (currentRequest !== request.current) return;
+      setResult({ variable: envVar, target, state: 'copied' });
+      resetTimer.current = window.setTimeout(() => {
+        resetTimer.current = undefined;
+        setResult(null);
+      }, 2000);
+    } catch {
+      if (currentRequest === request.current) setResult({ variable: envVar, target, state: 'failed' });
+    } finally {
+      if (currentRequest === request.current) pending.current = false;
+    }
+  };
+  const copyButton = (target: 'name' | 'example') => {
+    const state = current?.target === target ? current.state : 'idle';
+    return <button type="button" className={styles.copyButton} data-state={state}
+      aria-label={target === 'name' ? `Copy ${envVar.name} variable name` : `Copy example for ${envVar.name}`}
+      aria-describedby={state === 'failed' ? feedbackId : undefined}
+      title={state === 'copied' ? 'Copied' : state === 'failed' ? 'Retry copying' : target === 'name' ? 'Copy variable name' : 'Copy example'}
+      onClick={() => void copy(target)}>
+      {state === 'copied' ? <CheckIcon size={14} weight="bold" aria-hidden="true" />
+        : state === 'failed' ? <WarningIcon size={14} aria-hidden="true" /> : <CopyIcon size={14} aria-hidden="true" />}
+    </button>;
+  };
+
+  return <li className={styles.variable}>
+    <div className={styles.variableHeader}>
+      <div className={styles.nameLine}><code className={styles.variableName}>{envVar.name}</code>{copyButton('name')}</div>
+      <div className={styles.labels}>
+        {typeof envVar.secret === 'boolean' && <span className={styles.label} data-secret={envVar.secret}>{envVar.secret ? 'Secret' : 'Config'}</span>}
+        {envVar.required === false && <span className={styles.label}>Optional</span>}
+        {envVar.techStackCategory && <span className={styles.category}>{envVar.techStackCategory}</span>}
       </div>
-
-      <p className="font-body text-xs text-text-muted">{envVar.description}</p>
-
-      {envVar.placeholder && (
-        <p className="font-mono text-[11px] text-text-muted">
-          Example: <span className="text-trace">{envVar.placeholder}</span>
-        </p>
-      )}
     </div>
-  );
+    <p className={styles.description}>{envVar.description}</p>
+    {envVar.placeholder && <div className={styles.example}>
+      <span className={styles.exampleLabel}>Example:</span>
+      {policy.hidden ? <span className={styles.withheld}>Sensitive-looking example withheld</span>
+        : <code className={styles.exampleValue}>{envVar.placeholder}</code>}
+      {policy.canCopy && copyButton('example')}
+    </div>}
+    <p id={feedbackId} role="status" aria-live="polite" aria-atomic="true"
+      className={current ? styles.copyFeedback : 'sr-only'} data-state={current?.state}>
+      {current?.state === 'copied' ? current.target === 'name' ? 'Variable name copied.' : 'Example copied.'
+        : current?.state === 'failed' ? `Could not copy. Select the ${current.target === 'name' ? 'variable name' : 'example'} and copy it manually.` : ''}
+    </p>
+  </li>;
 }
 
-function EnvVarsContent({
-  mapId,
-  nodes,
-}: {
-  mapId: string;
-  nodes: MapprSystem['architecture']['nodes'];
-}) {
-  // The API loads the set for the current techStack + architecture hash,
-  // independently of map version. Keep that contract authoritative.
-  const {
-    record, isLoading, isRunning, isDownloading, isWorking, error,
-    resultRevision, downloaded, runGeneration, runDownload,
-  } = useGeneratedArtifact({
+function EnvVarsContent({ mapId, nodes }: { mapId: string; nodes: MapprSystem['architecture']['nodes'] }) {
+  const contentId = useId();
+  const [lastAction, setLastAction] = useState<'load' | 'generate' | 'download'>('load');
+  const [exportIssue, setExportIssue] = useState<string | null>(null);
+  const actionPending = useRef(false);
+  const exportEpoch = useRef(0);
+  useEffect(() => () => { exportEpoch.current++; }, []);
+  // Saved variables remain keyed by the current tech stack + architecture hash.
+  const { record, isLoading, isRunning, isDownloading, isWorking, error, downloaded, runGeneration, runDownload } = useGeneratedArtifact({
     mapId, load: getEnvVars, generate: runEnvVars,
     loadError: 'Could not load saved environment variables. Reopen this view to retry, or generate new variables.',
     generationError: 'Something went wrong generating the environment variables.',
-    exportError: 'Something went wrong rendering the .env.example file.',
+    exportError: 'Could not prepare a safe .env.example export.',
   });
+  const sections = useMemo(() => record ? groupIntoSections(record.vars, nodes) : [], [record, nodes]);
+  const sectionId = (key: string) => contentId + '-service-' + encodeURIComponent(key);
 
+  const handleGenerate = (trigger: HTMLButtonElement) => {
+    if (isLoading || isWorking || actionPending.current) return;
+    actionPending.current = true;
+    exportEpoch.current++;
+    setLastAction('generate');
+    setExportIssue(null);
+    return runGeneration(trigger).finally(() => { actionPending.current = false; });
+  };
   const handleDownload = (trigger: HTMLButtonElement) => {
-    if (!record) return;
-    return runDownload(trigger, async () => {
+    if (!record || isLoading || isWorking || actionPending.current) return;
+    actionPending.current = true;
+    const epoch = ++exportEpoch.current;
+    setLastAction('download');
+    setExportIssue(null);
+    const operation = runDownload(trigger, async () => {
       const file = await getEnvVarsFile(mapId);
+      try { assertSafeEnvTemplate(file, record.vars); }
+      catch (issue) {
+        if (epoch === exportEpoch.current && issue instanceof UnsafeEnvExampleError) setExportIssue(issue.message);
+        throw issue;
+      }
       return { filename: '.env.example', content: file, mimeType: 'text/plain' };
     });
+    return Promise.resolve(operation).finally(() => { actionPending.current = false; });
   };
+  const displayedError = error && lastAction === 'download' ? exportIssue ?? error : error;
 
-  const sections = record ? groupIntoSections(record.vars, nodes) : [];
-
-  let statusMessage = 'No variables generated for the current tech stack and architecture yet.';
-  if (isLoading) statusMessage = 'Loading saved environment variables…';
-  else if (isRunning) statusMessage = record
-    ? 'Generating environment variables. The displayed variables remain visible.' : 'Generating environment variables…';
-  else if (isDownloading) statusMessage = 'Preparing .env.example download…';
-  else if (record) statusMessage = `${downloaded ? '.env.example download prepared. ' : ''}${record.vars.length} variable${record.vars.length === 1 ? '' : 's'} identified`;
-  else if (error) statusMessage = 'No environment variables are currently displayed.';
-
-  return (
-    <div className="flex flex-col gap-4 rounded-lg border border-canvas-grid bg-canvas p-6">
-      <div>
-        <div className="flex flex-col items-start justify-between gap-4 lg:flex-row">
-          <div className="min-w-0">
-            <p className="font-display text-base font-semibold text-text">Environment Variables</p>
-            <p role="status" aria-atomic="true" className="mt-1 font-body text-sm text-text-muted">
-              {statusMessage}
-            </p>
-          </div>
-
-          <div className="flex w-full shrink-0 flex-wrap items-center gap-2 lg:w-auto">
-            {record && (
-              <button
-                onClick={(event) => void handleDownload(event.currentTarget)}
-                disabled={isWorking}
-                aria-busy={isDownloading}
-                className="flex items-center gap-2 rounded-full border border-canvas-grid px-4 py-2 font-mono text-xs uppercase tracking-wide text-text-muted shadow-lg transition-colors hover:bg-surface-raised hover:text-text disabled:opacity-60"
-              >
-                <DownloadIcon size={14} weight="bold" />
-                {isDownloading ? 'Rendering…' : '.env.example'}
-              </button>
-            )}
-            <button
-              onClick={(event) => void runGeneration(event.currentTarget)}
-              disabled={isWorking || isLoading}
-              aria-busy={isRunning}
-              className="flex items-center gap-2 rounded-full bg-signal px-4 py-2 font-mono text-xs uppercase tracking-wide text-canvas shadow-lg transition-opacity hover:opacity-90 disabled:opacity-60"
-            >
-              <GearSixIcon size={14} weight="bold" />
-              {isLoading ? 'Loading…' : isRunning ? 'Generating…' : record ? 'Regenerate' : 'Generate Variables'}
-            </button>
-          </div>
-        </div>
-
-        <MotionDisclosure isOpen={Boolean(error)}>
-          <div role="alert" className="mt-4 rounded-lg border border-danger bg-surface px-4 py-2 font-body text-xs text-danger">
-            {error}
-          </div>
-        </MotionDisclosure>
+  return <section className={styles.reference} aria-label="Environment variables">
+    <header className={styles.header}>
+      <div><h2>Environment Variables</h2>
+        {record && <p className={styles.summary}>{record.vars.length} variable{record.vars.length === 1 ? '' : 's'} identified</p>}
       </div>
-
-      {record && (
-        <div key={resultRevision} role="region" aria-label="Environment variables" className={`${styles.results} flex flex-col gap-4`}>
-          {record.vars.length === 0 && (
-            <p className="font-body text-sm text-text-muted">
-              No environment variables were identified — try regenerating.
-            </p>
-          )}
-
-          {sections.map((section) => (
-            <div key={section.key} className="flex flex-col gap-3">
-              <p className="font-mono text-xs uppercase tracking-wide text-text-muted">{section.title}</p>
-              <div className="flex flex-col gap-3 rounded-lg border border-canvas-grid bg-surface-raised p-4">
-                {section.vars.map((envVar) => (
-                  <EnvVarRow key={envVar.name} envVar={envVar} />
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      <div className={styles.actions}>
+        {record && <ActionButton compactPending variant="secondary" disabled={isLoading || isWorking}
+          onClick={(event) => void handleDownload(event.currentTarget)}
+          state={isDownloading ? 'pending' : error && lastAction === 'download' ? 'error' : downloaded ? 'success' : 'idle'}
+          idleLabel=".env.example" pendingLabel="Preparing .env.example download" successLabel=".env.example" errorLabel="Retry export"
+          icon={<DownloadIcon size={14} weight="bold" />} />}
+        <ActionButton compactPending disabled={isLoading || isWorking}
+          onClick={(event) => void handleGenerate(event.currentTarget)}
+          state={isLoading || isRunning ? 'pending' : error && lastAction === 'generate' ? 'error' : 'idle'}
+          idleLabel={record ? 'Regenerate' : 'Generate Variables'} pendingLabel={isLoading ? 'Loading saved environment variables' : 'Generating environment variables'}
+          errorLabel="Retry generation" icon={<GearSixIcon size={14} weight="bold" />} />
+      </div>
+    </header>
+    <MotionDisclosure isOpen={Boolean(displayedError)}><p role="alert" className={styles.error}>{displayedError}</p></MotionDisclosure>
+    {sections.length > 1 && <nav className={styles.serviceNav} aria-label="Environment variable services">
+      <ul>{sections.map((section) => <li key={section.key}>
+        <a href={'#' + encodeURIComponent(sectionId(section.key))} onClick={() => document.getElementById(sectionId(section.key))?.focus({ preventScroll: true })}>{section.title}</a>
+      </li>)}</ul>
+    </nav>}
+    <div className={styles.sections}>
+      {record?.vars.length === 0 && <p className={styles.empty}>No environment variables were identified. Try regenerating.</p>}
+      {!record && !isLoading && !isRunning && !error && <p className={styles.empty}>No variables generated for the current tech stack and architecture yet.</p>}
+      {sections.map((section) => <section key={section.key} className={styles.service} aria-labelledby={sectionId(section.key)}>
+        <h3 id={sectionId(section.key)} tabIndex={-1} className={styles.serviceHeading}>{section.title}</h3>
+        <ul className={styles.variables}>{section.vars.map((envVar, index) => <EnvVarRow key={envVar.name + '-' + index} envVar={envVar} />)}</ul>
+      </section>)}
     </div>
-  );
+    <p role="status" aria-atomic="true" className="sr-only">
+      {isLoading ? 'Loading saved environment variables.' : isRunning ? 'Generating environment variables. Existing variables remain available.'
+        : isDownloading ? 'Preparing .env.example download.' : downloaded ? '.env.example download prepared.' : ''}
+    </p>
+  </section>;
 }
 
 export function EnvVarsView(props: { mapId: string; nodes: MapprSystem['architecture']['nodes'] }) {
