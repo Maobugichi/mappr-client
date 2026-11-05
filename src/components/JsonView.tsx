@@ -1,84 +1,21 @@
 'use client';
 
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type ReactNode,
+  startTransition, useCallback, useDeferredValue, useEffect, useId, useLayoutEffect,
+  useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode,
 } from 'react';
-import { CaretRightIcon, CheckIcon, CopyIcon, WarningIcon } from '@phosphor-icons/react';
-
-// Motion for this view (see the Mappr motion brief, "JSON"):
-//   Expand / Collapse -> the caret rotates, `fast` + standard easing.
-//   Children mount/unmount immediately: no fade, no height animation, no
-//   stagger. Nothing here is a genuine layout change, and the rotating
-//   caret already communicates the state change.
-//   Reduced motion -> the rotation is dropped (immediate state change).
-// Expansion state is view state only; the data stays the single source of
-// truth and is never copied.
-//
-// Two modes with different jobs: Tree is a navigator (carets, previews,
-// depth); Pretty is an editor-style read-only view (syntax palette, bracket
-// colours, line numbers, indent guides) with its own --color-syntax-* tokens.
-//
-// Toolbar: Tree / Pretty modes, depth buttons (Tree only) and Copy JSON.
-//   Switching mode is an instant swap — the pressed state is the feedback,
-//   and nothing moves spatially. Copy shows "Copied" only after the
-//   clipboard write has actually succeeded (never optimistically), and a
-//   failure stays visible until the next attempt. Neither adds motion.
-//
-// Formatting follows a JSON file: quoted keys, a space after each colon,
-// trailing commas (none after the last item), closing brackets on their
-// own line, 24px indent per level with a guide line under the caret.
-// Array indexes are not shown (a JSON file doesn't show them); the
-// assistive-tech labels still say "item N".
-
-type Container = Record<string, unknown> | unknown[];
-
-function isContainer(value: unknown): value is Container {
-  return typeof value === 'object' && value !== null;
-}
-
-function entriesOf(container: Container): [string, unknown][] {
-  return Array.isArray(container)
-    ? container.map((item, index) => [String(index), item])
-    : Object.entries(container);
-}
-
-// Paths are built from encoded keys so a key containing the separator
-// can't collide with a nested path. The root is the empty string.
-function childPath(parent: string, key: string): string {
-  return `${parent}/${encodeURIComponent(key)}`;
-}
-
-// Container paths to open for a given depth: containers at depth < maxDepth
-// (the root is depth 0). maxDepth 1 = root only (default / "Collapse all"),
-// 2 = root + each section, Infinity = everything ("Expand all").
-function collectPathsToDepth(
-  value: unknown,
-  path: string,
-  depth: number,
-  maxDepth: number,
-  into: string[],
-): string[] {
-  if (!isContainer(value) || depth >= maxDepth) return into;
-  const entries = entriesOf(value);
-  if (entries.length === 0) return into;
-  into.push(path);
-  for (const [key, child] of entries) {
-    collectPathsToDepth(child, childPath(path, key), depth + 1, maxDepth, into);
-  }
-  return into;
-}
-
-// ---- Collapsed previews -------------------------------------------------
-// A collapsed node shows a peek at its leading primitive values, e.g.
-// { id: "f1", name: "Login", … }, so a list of objects is identifiable
-// without opening each one. Nodes with nothing primitive to show fall
-// back to a count, e.g. [ 12 items ].
+import {
+  ArrowDownIcon, ArrowUpIcon, ArrowsInSimpleIcon, ArrowsOutSimpleIcon, CaretDownIcon,
+  CaretRightIcon, CheckIcon, CopyIcon, LinkSimpleIcon, MagnifyingGlassIcon, XIcon,
+} from '@phosphor-icons/react';
+import { usePreservedViewState } from '@/lib/artifact-workspace';
+import {
+  ancestorPaths, buildJsonIndex, effectiveOpenPaths, entriesOf, findEntries, initialInspectorState,
+  isContainer, jsonValueText, pathsToDepth, reconcileInspectorState, visiblePaths,
+  type InspectorState, type JsonContainer as Container, type JsonEntry, type JsonIndex,
+} from '@/lib/json-inspector';
+import { ActionButton } from './ActionButton';
+import styles from './JsonView.module.css';
 
 const PREVIEW_ITEMS = 3;
 const PREVIEW_STRING_MAX = 24;
@@ -208,310 +145,252 @@ function PrettyJson({ text }: { text: string }) {
   );
 }
 
-// ---- Rendering ------------------------------------------------------------
+
 
 function Primitive({ value }: { value: unknown }) {
-  if (typeof value === 'string') {
-    return <span className="text-text">{JSON.stringify(value)}</span>;
-  }
-  if (value === null) {
-    return <span className="text-text-muted">null</span>;
-  }
-  return <span className="text-signal">{String(value)}</span>;
+  const tone = value === null ? 'text-syntax-null' : typeof value === 'string' ? 'text-syntax-string'
+    : typeof value === 'boolean' ? 'text-syntax-boolean' : 'text-syntax-number';
+  return <span className={tone}>{typeof value === 'string' ? JSON.stringify(value) : String(value)}</span>;
 }
 
-// One line of the document: a 20px lead column (caret or empty gutter)
-// then the content. Collapsed rows stay on a single truncated line;
-// everything else wraps like text in a file.
-function Row({
-  lead,
-  truncate = false,
-  children,
-}: {
-  lead: ReactNode;
-  truncate?: boolean;
-  children: ReactNode;
+type CopyKind = 'path' | 'value';
+type CopyFeedback = { source: unknown; target: string; state: 'copied' | 'failed'; message: string };
+type CopyNode = (kind: CopyKind, entry: JsonEntry) => void;
+const copyTarget = (kind: CopyKind, entry: JsonEntry) => kind + ':' + entry.path;
+
+function CopyProperty({ kind, entry, feedback, onCopy }: {
+  kind: CopyKind; entry: JsonEntry; feedback: CopyFeedback | null; onCopy: CopyNode;
 }) {
-  return (
-    <div className="flex items-start">
-      {lead}
-      <div className={`min-w-0 flex-1 pl-1 ${truncate ? 'truncate' : 'break-words'}`}>
-        {children}
-      </div>
-    </div>
-  );
+  if (kind === 'value' && entry.value === undefined) return null;
+  const result = feedback?.target === copyTarget(kind, entry) ? feedback.state : undefined;
+  const label = kind === 'path' ? 'Copy path ' + entry.displayPath : 'Copy JSON value at ' + entry.displayPath;
+  return <button type="button" className={styles.smallButton} data-state={result}
+    aria-label={label} title={result === 'copied' ? 'Copied' : label} onClick={() => onCopy(kind, entry)}>
+    {result === 'copied' ? <CheckIcon size={14} weight="bold" aria-hidden="true" />
+      : kind === 'path' ? <LinkSimpleIcon size={14} aria-hidden="true" /> : <CopyIcon size={14} aria-hidden="true" />}
+  </button>;
 }
 
-type JsonNodeProps = {
-  name?: string;
-  parentIsArray?: boolean;
-  value: unknown;
-  path: string;
-  isLast: boolean;
-  openPaths: Set<string>;
-  onToggle: (path: string) => void;
-};
-
-function JsonNode({ name, parentIsArray, value, path, isLast, openPaths, onToggle }: JsonNodeProps) {
-  // Array items have no key in a JSON file, so no label is drawn for them.
-  const keyLabel =
-    name === undefined || parentIsArray ? null : (
-      <>
-        <span className="text-trace">{JSON.stringify(name)}</span>
-        <span className="text-text-muted">:</span>{' '}
-      </>
-    );
-
-  const comma = isLast ? null : <span className="text-text-muted">,</span>;
-  const gutter = <span className="w-5 shrink-0" aria-hidden="true" />;
-
-  if (!isContainer(value)) {
-    return (
-      <Row lead={gutter}>
-        {keyLabel}
-        <Primitive value={value} />
-        {comma}
-      </Row>
-    );
-  }
-
-  const entries = entriesOf(value);
-  const isArray = Array.isArray(value);
-  const openBracket = isArray ? '[' : '{';
-  const closeBracket = isArray ? ']' : '}';
-
-  if (entries.length === 0) {
-    return (
-      <Row lead={gutter}>
-        {keyLabel}
-        <span className="text-text-muted">
-          {openBracket}
-          {closeBracket}
-        </span>
-        {comma}
-      </Row>
-    );
-  }
-
-  const isOpen = openPaths.has(path);
-  const subject = name === undefined ? 'root' : parentIsArray ? `item ${name}` : name;
-
-  const caret = (
-    <button
-      type="button"
-      onClick={() => onToggle(path)}
-      aria-expanded={isOpen}
-      aria-label={`${isOpen ? 'Collapse' : 'Expand'} ${subject}`}
-      className="flex h-6 w-5 shrink-0 items-center justify-center rounded text-text-muted transition-colors hover:text-text"
-    >
-      <CaretRightIcon
-        size={14}
-        weight="bold"
-        className={`transition-transform duration-(--motion-fast) ease-standard motion-reduce:transition-none ${
-          isOpen ? 'rotate-90' : ''
-        }`}
-      />
-    </button>
-  );
-
-  return (
-    <div>
-      <Row lead={caret} truncate={!isOpen}>
-        {keyLabel}
-        {isOpen ? (
-          <span className="text-text-muted">{openBracket}</span>
-        ) : (
-          <>
-            <span className="text-text-muted">{previewOf(value) ?? summarize(value)}</span>
-            {comma}
-          </>
-        )}
-      </Row>
-
-      {isOpen && (
-        <>
-          {/* 10px margin + 1px guide + 13px padding = 24px per level; the
-              guide sits under the centre of the parent's caret. */}
-          <div className="ml-2.5 border-l border-text-muted/25 pl-[13px]">
-            {entries.map(([key, child], index) => (
-              <JsonNode
-                key={key}
-                name={key}
-                parentIsArray={isArray}
-                value={child}
-                path={childPath(path, key)}
-                isLast={index === entries.length - 1}
-                openPaths={openPaths}
-                onToggle={onToggle}
-              />
-            ))}
-          </div>
-          <Row lead={gutter}>
-            <span className="text-text-muted">{closeBracket}</span>
-            {comma}
-          </Row>
-        </>
-      )}
+function JsonNode({ entry, index, openPaths, selectedPath, matches, activeMatch, feedback, treeId, onToggle, onSelect, onCopy, onNavigate, isLast }: {
+  entry: JsonEntry; index: JsonIndex; openPaths: Set<string>; selectedPath: string;
+  matches: Set<string>; activeMatch?: string; feedback: CopyFeedback | null; treeId: string;
+  onToggle: (path: string) => void; onSelect: (path: string) => void; onCopy: CopyNode;
+  onNavigate: (event: KeyboardEvent<HTMLButtonElement>) => void; isLast: boolean;
+}) {
+  const { value, path } = entry;
+  const container = isContainer(value), expandable = entry.children.length > 0;
+  const open = expandable && openPaths.has(path);
+  const bracket = Array.isArray(value) ? ['[', ']'] : ['{', '}'];
+  const childrenId = treeId + '-children-' + entry.id;
+  const selected = path === selectedPath;
+  return <li>
+    <div className={styles.row} data-json-id={entry.id} data-selected={selected}
+      data-match={matches.has(path)} data-active-match={path === activeMatch}>
+      {expandable ? <button type="button" className={styles.chevron} onClick={() => onToggle(path)}
+        aria-expanded={open} aria-controls={childrenId} aria-label={(open ? 'Collapse ' : 'Expand ') + entry.displayPath}>
+        <CaretRightIcon size={14} weight="bold" aria-hidden="true" data-open={open} />
+      </button> : <span className={styles.gutter} aria-hidden="true" />}
+      <button type="button" data-json-select={entry.id} className={styles.property} aria-pressed={selected}
+        title={entry.displayPath} onFocus={() => onSelect(path)} onClick={() => onSelect(path)} onKeyDown={onNavigate}>
+        <span className="sr-only">{entry.displayPath + ': '}</span>
+        {entry.name !== undefined && !entry.parentIsArray && <><span className="text-trace">{JSON.stringify(entry.name)}</span><span className={styles.punctuation}>: </span></>}
+        {container ? <span className={styles.punctuation}>{open ? bracket[0] : expandable ? previewOf(value) ?? summarize(value) : bracket.join('')}</span>
+          : <Primitive value={value} />}
+        {!open && !isLast && <span className={styles.punctuation}>,</span>}
+      </button>
+      <span className={styles.rowCopies} role="group" aria-label={'Copy ' + entry.displayPath}>
+        <CopyProperty kind="value" entry={entry} feedback={feedback} onCopy={onCopy} />
+        <CopyProperty kind="path" entry={entry} feedback={feedback} onCopy={onCopy} />
+      </span>
     </div>
-  );
+    {expandable && <ul id={childrenId} className={styles.children} hidden={!open}>
+      {open && entry.children.map((path, i) => <JsonNode key={path} entry={index.get(path)!}
+        index={index} openPaths={openPaths} selectedPath={selectedPath} matches={matches} activeMatch={activeMatch}
+        feedback={feedback} treeId={treeId} onToggle={onToggle} onSelect={onSelect} onCopy={onCopy}
+        onNavigate={onNavigate} isLast={i === entry.children.length - 1} />)}
+    </ul>}
+    {open && <div className={styles.closing} aria-hidden="true">{bracket[1]}{isLast ? '' : ','}</div>}
+  </li>;
 }
 
-type Mode = 'tree' | 'pretty';
-type CopyState = 'idle' | 'copied' | 'failed';
-
-const MODES: { id: Mode; label: string }[] = [
-  { id: 'tree', label: 'Tree' },
-  { id: 'pretty', label: 'Pretty' },
-];
-
-const COPIED_RESET_MS = 1500;
-
-const TOOLBAR_BUTTON_BASE =
-  'rounded-full border border-canvas-grid px-3 py-1 font-mono text-xs uppercase tracking-wide transition-colors';
-const TOOLBAR_BUTTON = `${TOOLBAR_BUTTON_BASE} text-text-muted hover:bg-surface-raised hover:text-text`;
+function DepthMenu({ onDepth }: { onDepth: (depth: number) => void }) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  const close = () => {
+    if (!ref.current) return;
+    ref.current.open = false;
+    ref.current.querySelector('summary')?.focus();
+  };
+  return <details ref={ref} className={styles.depthMenu} onKeyDown={(event) => {
+    if (event.key === 'Escape') { event.preventDefault(); close(); }
+  }}>
+    <summary>Expand to level <CaretDownIcon size={12} aria-hidden="true" /></summary>
+    <div className={styles.depthOptions} role="group" aria-label="Expansion depth">
+      {[2, 3].map((depth) => <button key={depth} type="button" onClick={() => { onDepth(depth); close(); }}>Level {depth}</button>)}
+    </div>
+  </details>;
+}
 
 export function JsonView({ data }: { data: unknown }) {
-  const [mode, setMode] = useState<Mode>('tree');
-  // Default: root open one level, everything beneath it collapsed — the
-  // full document is long, so the structure should read at a glance.
-  const [openPaths, setOpenPaths] = useState<Set<string>>(() => new Set(['']));
-  const [copyState, setCopyState] = useState<CopyState>('idle');
-  const resetTimer = useRef<number | null>(null);
+  const index = useMemo(() => buildJsonIndex(data), [data]);
+  const prettyText = useMemo(() => jsonValueText(data), [data]);
+  const [saved, setView] = usePreservedViewState<InspectorState>('json:inspector', () => initialInspectorState(data));
+  let view = saved;
+  if (view.source !== data) {
+    view = reconcileInspectorState(view, data, index);
+    setView(view);
+  }
+  const treeId = useId(), findId = treeId + '-find';
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const searchToggleRef = useRef<HTMLButtonElement>(null);
+  const [revealRequest, setRevealRequest] = useState(0);
+  const deferredQuery = useDeferredValue(view.query);
+  const query = view.query.trim() ? deferredQuery : '';
+  const results = useMemo(() => findEntries(index, query), [index, query]);
+  const matchedPaths = useMemo(() => new Set(results.map((entry) => entry.path)), [results]);
+  const activeMatch = results.find((entry) => entry.path === view.matchPath) ?? results[0];
+  const activeIndex = activeMatch ? results.indexOf(activeMatch) : -1;
+  const revealed = useMemo(() => ancestorPaths(index, activeMatch?.path ?? null), [index, activeMatch]);
+  const openPaths = useMemo(() => effectiveOpenPaths(view.manualPaths, revealed, view.searchClosed), [view.manualPaths, revealed, view.searchClosed]);
+  const visible = useMemo(() => visiblePaths(index, openPaths), [index, openPaths]);
+  const selected = index.get(view.selectedPath) ?? index.get('')!;
+  const [storedFeedback, setFeedback] = useState<CopyFeedback | null>(null);
+  const feedback = storedFeedback?.source === data ? storedFeedback : null;
+  const copyRequest = useRef(0), resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const prettyText = useMemo(() => JSON.stringify(data, null, 2), [data]);
+  useEffect(() => () => {
+    copyRequest.current++;
+    if (resetTimer.current !== null) clearTimeout(resetTimer.current);
+  }, [data]);
 
-  const handleToggle = useCallback((path: string) => {
-    setOpenPaths((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  }, []);
-
-  // Depth buttons are plain state changes: no fade, no stagger.
-  const openToDepth = useCallback(
-    (maxDepth: number) => setOpenPaths(new Set(collectPathsToDepth(data, '', 0, maxDepth, []))),
-    [data],
-  );
-
-  const clearResetTimer = useCallback(() => {
-    if (resetTimer.current !== null) {
-      window.clearTimeout(resetTimer.current);
-      resetTimer.current = null;
-    }
-  }, []);
-
-  useEffect(() => clearResetTimer, [clearResetTimer]);
-
-  const handleCopy = useCallback(async () => {
-    clearResetTimer();
+  const copy = useCallback(async (target: string, text: () => string, description: string) => {
+    const request = ++copyRequest.current;
+    if (resetTimer.current !== null) clearTimeout(resetTimer.current);
     try {
-      await navigator.clipboard.writeText(prettyText);
-      setCopyState('copied');
-      resetTimer.current = window.setTimeout(() => {
-        resetTimer.current = null;
-        setCopyState('idle');
-      }, COPIED_RESET_MS);
+      await navigator.clipboard.writeText(text());
+      if (request !== copyRequest.current) return;
+      setFeedback({ source: data, target, state: 'copied', message: description + ' copied.' });
+      resetTimer.current = setTimeout(() => { if (request === copyRequest.current) setFeedback(null); }, 1500);
     } catch {
-      // Blocked or unavailable (the clipboard API needs HTTPS or localhost).
-      // Stays visible until the next attempt.
-      setCopyState('failed');
+      if (request === copyRequest.current) setFeedback({ source: data, target, state: 'failed', message: 'Could not copy ' + description.toLowerCase() + '. Try again.' });
     }
-  }, [prettyText, clearResetTimer]);
+  }, [data]);
+  const copyNode: CopyNode = (kind, entry) => void copy(copyTarget(kind, entry),
+    () => kind === 'path' ? entry.displayPath : jsonValueText(entry.value), kind === 'path' ? 'Path' : 'Value');
 
-  const copyClass =
-    copyState === 'idle'
-      ? TOOLBAR_BUTTON
-      : `${TOOLBAR_BUTTON_BASE} hover:bg-surface-raised ${
-          copyState === 'copied' ? 'text-success' : 'text-danger'
-        }`;
+  useLayoutEffect(() => {
+    if (view.mode !== 'tree' || !query.trim() || !activeMatch) return;
+    const viewport = viewportRef.current;
+    const row = viewport?.querySelector<HTMLElement>('[data-json-id="' + activeMatch.id + '"]');
+    if (!viewport || !row) return;
+    const bounds = viewport.getBoundingClientRect(), target = row.getBoundingClientRect();
+    const top = target.top < bounds.top + 4 ? target.top - bounds.top - 4
+      : target.bottom > bounds.bottom - 4 ? target.bottom - bounds.bottom + 4 : 0;
+    if (top) viewport.scrollBy({ top, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+  }, [view.mode, query, activeMatch, revealRequest]);
 
-  return (
-    <div className="flex flex-col rounded-lg bg-surface-raised">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-canvas-grid px-6 py-3">
-        <div
-          role="group"
-          aria-label="View mode"
-          className="flex rounded-full border border-canvas-grid p-0.5"
-        >
-          {MODES.map(({ id, label }) => (
-            <button
-              key={id}
-              type="button"
-              aria-pressed={mode === id}
-              onClick={() => setMode(id)}
-              className={`rounded-full px-3 py-1 font-mono text-xs uppercase tracking-wide transition-colors ${
-                mode === id ? 'bg-canvas text-trace' : 'text-text-muted hover:text-text'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+  const select = useCallback((path: string) => setView((current) => current.selectedPath === path ? current : { ...current, selectedPath: path }), [setView]);
+  const toggle = (path: string) => setView((current) => {
+    const manualPaths = new Set(current.manualPaths), searchClosed = new Set(current.searchClosed);
+    const open = !current.searchClosed.has(path) && (current.manualPaths.has(path) || revealed.has(path));
+    if (open) {
+      manualPaths.delete(path);
+      if (revealed.has(path)) searchClosed.add(path);
+    } else { manualPaths.add(path); searchClosed.delete(path); }
+    return { ...current, manualPaths, searchClosed };
+  });
+  const openToDepth = (depth: number) => {
+    const paths = pathsToDepth(index, depth);
+    startTransition(() => setView((current) => ({ ...current, manualPaths: paths,
+      searchClosed: new Set(Array.from(revealed).filter((path) => !paths.has(path))) })));
+  };
+  const changeQuery = (query: string) => setView((current) => ({
+    ...current, query, matchPath: query.trim() ? current.matchPath : null, searchClosed: new Set(),
+  }));
+  const advance = (direction: number) => {
+    if (!results.length) return;
+    setView((current) => {
+      const at = Math.max(0, results.findIndex((entry) => entry.path === current.matchPath));
+      return { ...current, matchPath: results[(at + direction + results.length) % results.length].path, searchClosed: new Set() };
+    });
+    setRevealRequest((request) => request + 1);
+  };
+  const closeFind = () => {
+    setView((current) => ({ ...current, mobileFindOpen: false }));
+    searchToggleRef.current?.focus({ preventScroll: true });
+  };
+  const navigate = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.altKey || event.ctrlKey || event.metaKey || !['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+    const buttons = Array.from(viewportRef.current?.querySelectorAll<HTMLButtonElement>('[data-json-select]') ?? []);
+    const current = buttons.indexOf(event.currentTarget);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+      : Math.min(buttons.length - 1, Math.max(0, current + (event.key === 'ArrowDown' ? 1 : -1)));
+    event.preventDefault();
+    buttons[next]?.focus();
+  };
+  const copyAllState = feedback?.target === 'whole' ? feedback.state === 'copied' ? 'success' : 'error' : 'idle';
+
+  return <section className={styles.inspector} aria-label="JSON Inspector">
+    <div className={styles.toolbar}>
+      <div className={styles.mainControls}>
+        <div className={styles.modes} role="group" aria-label="JSON view mode">
+          {(['tree', 'pretty'] as const).map((mode) => <button key={mode} type="button" aria-pressed={view.mode === mode}
+            onClick={() => setView((current) => ({ ...current, mode, mobileFindOpen: mode === 'tree' && current.mobileFindOpen }))}>
+            {mode === 'tree' ? 'Tree' : 'Pretty'}
+          </button>)}
         </div>
-
-        {mode === 'tree' && (
-          <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={() => openToDepth(1)} className={TOOLBAR_BUTTON}>
-              Collapse all
-            </button>
-            <button type="button" onClick={() => openToDepth(2)} className={TOOLBAR_BUTTON}>
-              Level 2
-            </button>
-            <button type="button" onClick={() => openToDepth(3)} className={TOOLBAR_BUTTON}>
-              Level 3
-            </button>
-            <button
-              type="button"
-              onClick={() => openToDepth(Number.POSITIVE_INFINITY)}
-              className={TOOLBAR_BUTTON}
-            >
-              Expand all
-            </button>
-          </div>
-        )}
-
-        <button
-          type="button"
-          onClick={handleCopy}
-          className={`${copyClass} ml-auto flex min-w-40 items-center justify-center gap-2`}
-        >
-          {copyState === 'copied' ? (
-            <CheckIcon size={14} weight="bold" aria-hidden="true" />
-          ) : copyState === 'failed' ? (
-            <WarningIcon size={14} weight="bold" aria-hidden="true" />
-          ) : (
-            <CopyIcon size={14} aria-hidden="true" />
-          )}
-          {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? "Couldn't copy" : 'Copy JSON'}
-        </button>
-
-        <span role="status" aria-live="polite" className="sr-only">
-          {copyState === 'copied'
-            ? 'JSON copied to clipboard'
-            : copyState === 'failed'
-              ? 'Could not copy JSON'
-              : ''}
-        </span>
+        <button ref={searchToggleRef} type="button" className={styles.searchToggle} disabled={view.mode !== 'tree'}
+          aria-expanded={view.mobileFindOpen} aria-controls={findId} data-active={Boolean(view.query.trim())}
+          aria-label={'Find in Tree' + (view.query.trim() ? ', saved query: ' + view.query : '')} title="Find in Tree"
+          onClick={() => {
+            setView((current) => ({ ...current, mobileFindOpen: true }));
+            requestAnimationFrame(() => inputRef.current?.focus());
+          }}><MagnifyingGlassIcon size={16} aria-hidden="true" /></button>
+        <div id={findId} className={styles.find} data-mobile-open={view.mobileFindOpen}>
+          <MagnifyingGlassIcon size={14} aria-hidden="true" />
+          <input ref={inputRef} type="search" value={view.query} disabled={view.mode !== 'tree'}
+            aria-label="Find keys and values in Tree mode" placeholder="Find in Tree" autoComplete="off" spellCheck={false}
+            onChange={(event) => changeQuery(event.target.value)} onKeyDown={(event) => {
+              if (event.key === 'Enter') { event.preventDefault(); advance(event.shiftKey ? -1 : 1); }
+              if (event.key === 'Escape' && searchToggleRef.current?.getClientRects().length) { event.preventDefault(); closeFind(); }
+            }} />
+          {view.query && <button type="button" className={styles.clearFind} onClick={() => changeQuery('')}>Clear</button>}
+          <button type="button" className={styles.closeFind} aria-label="Close Find, keep query" title="Close Find" onClick={closeFind}><XIcon size={14} aria-hidden="true" /></button>
+        </div>
+        <ActionButton compactPending variant="secondary" className={styles.copyAll} title="Copy complete JSON"
+          state={copyAllState} idleLabel="Copy JSON" pendingLabel="Copy JSON" successLabel="Copied" errorLabel="Retry copy"
+          icon={<CopyIcon size={14} aria-hidden="true" />} onClick={() => void copy('whole', () => prettyText, 'JSON')} />
       </div>
-
-      {/* Keyed by mode so switching starts at the top; the tree's open state
-          lives above, so it survives a trip to Pretty and back. */}
-      <div
-        key={mode}
-        {...(mode === 'pretty'
-          ? { tabIndex: 0, role: 'region', 'aria-label': 'Pretty-printed JSON' }
-          : {})}
-        className={`max-h-[600px] overflow-auto rounded-b-lg p-6 font-mono text-sm leading-6 ${
-          mode === 'pretty' ? 'bg-surface' : ''
-        }`}
-      >
-        {mode === 'tree' ? (
-          <JsonNode value={data} path="" isLast openPaths={openPaths} onToggle={handleToggle} />
-        ) : (
-          <PrettyJson text={prettyText} />
-        )}
-      </div>
+      {view.mode === 'tree' ? <div className={styles.treeControls}>
+        <div className={styles.expansionControls}>
+          <button type="button" className={styles.secondary} onClick={() => openToDepth(Infinity)} title="Expand all" aria-label="Expand all"><ArrowsOutSimpleIcon size={14} aria-hidden="true" /><span>Expand all</span></button>
+          <button type="button" className={styles.secondary} onClick={() => openToDepth(1)} title="Collapse all (root stays open)" aria-label="Collapse all"><ArrowsInSimpleIcon size={14} aria-hidden="true" /><span>Collapse all</span></button>
+          <DepthMenu onDepth={openToDepth} />
+        </div>
+        {view.query.trim() && <div className={styles.matchControls}>
+          <output aria-live="polite" aria-atomic="true" aria-label={'Tree results for ' + query}>{results.length ? `${activeIndex + 1} / ${results.length} matches` : 'No matches'}</output>
+          <button type="button" className={styles.smallButton} disabled={!results.length} title="Previous match" aria-label="Previous match" onClick={() => advance(-1)}><ArrowUpIcon size={14} aria-hidden="true" /></button>
+          <button type="button" className={styles.smallButton} disabled={!results.length} title="Next match" aria-label="Next match" onClick={() => advance(1)}><ArrowDownIcon size={14} aria-hidden="true" /></button>
+        </div>}
+      </div> : <p className={styles.scope}>Find is available in Tree mode.</p>}
     </div>
-  );
+    {view.mode === 'tree' && <div className={styles.pathRow}>
+      <span className={styles.pathLabel}>Path</span><code aria-label="Selected JSON path">{selected.displayPath}</code>
+      {!visible.has(selected.path) && <span className={styles.hiddenSelection}>In a collapsed branch</span>}
+      <span className={styles.pathCopies} role="group" aria-label="Copy selected property">
+        <CopyProperty kind="value" entry={selected} feedback={feedback} onCopy={copyNode} />
+        <CopyProperty kind="path" entry={selected} feedback={feedback} onCopy={copyNode} />
+      </span>
+    </div>}
+    {feedback && <p role="status" className={styles.copyFeedback} data-state={feedback.state}>{feedback.message}</p>}
+    <p className="sr-only">In Tree mode, use Tab for property and expansion controls. Up and Down move between properties. Enter or Space selects a property; its separate chevron controls expansion.</p>
+    <div key={view.mode} ref={viewportRef} className={styles.viewport} data-mode={view.mode}
+      {...(view.mode === 'pretty' ? { tabIndex: 0, role: 'region', 'aria-label': 'Pretty-printed JSON' } : {})}>
+      {view.mode === 'tree' ? <ul className={styles.tree} aria-label="JSON properties">
+        <JsonNode entry={index.get('')!} index={index} openPaths={openPaths} selectedPath={selected.path}
+          matches={matchedPaths} activeMatch={activeMatch?.path} feedback={feedback} treeId={treeId}
+          onToggle={toggle} onSelect={select} onCopy={copyNode} onNavigate={navigate} isLast />
+      </ul> : <PrettyJson text={prettyText} />}
+    </div>
+  </section>;
 }

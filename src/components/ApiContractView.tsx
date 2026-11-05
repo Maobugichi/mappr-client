@@ -1,12 +1,13 @@
 'use client';
 
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { CaretDownIcon, CodeIcon, DownloadIcon } from '@phosphor-icons/react';
+import { CaretDownIcon, CodeIcon } from '@phosphor-icons/react';
 import type { ApiContract, ApiEndpoint, HttpMethod } from '@/lib/api';
 import { getApiContract, runApiContract } from '@/lib/api';
 import { buildOpenApiDocument } from '@/lib/openapi-export';
 import { useGeneratedArtifact } from '@/lib/use-generated-artifact';
-import { ActionButton } from './ActionButton';
+import { usePreservedViewState } from '@/lib/artifact-workspace';
+import { ArtifactActionButton, ArtifactActions } from './ArtifactActions';
 import { MotionDisclosure } from './MotionDisclosure';
 import styles from './ApiContractView.module.css';
 
@@ -101,8 +102,7 @@ function EndpointDetails({ endpoint, headingId }: { endpoint: ApiEndpoint; headi
   return (
     <div className={styles.operation}>
       <header className={styles.operationHeader}>
-        <div className={styles.operationPath}><MethodBadge method={endpoint.method} /><code>{endpoint.path}</code></div>
-        <h3 id={headingId} tabIndex={-1} className={styles.summary}>{endpoint.summary || endpoint.path}</h3>
+        <h3 id={headingId} tabIndex={-1} className={styles.summary}>{endpoint.summary?.trim() || endpoint.id || 'Operation details'}</h3>
         {description !== undefined && <p className={styles.description}>{description}</p>}
         <dl className={styles.operationMeta}>
           <div><dt>Authentication</dt><dd>{endpoint.access === 'public' ? 'Public' : endpoint.access === 'authenticated' ? 'Authenticated' : endpoint.access}</dd></div>
@@ -164,7 +164,7 @@ function EndpointExplorer({ contract }: { contract: ApiContract }) {
   const directoryRef = useRef<HTMLElement>(null);
   const inspectorRef = useRef<HTMLElement>(null);
   const revealFrameRef = useRef<number | null>(null);
-  const [view, setView] = useState<{ contract: ApiContract; endpoint: EndpointIdentity | null; expanded: string | null }>(() => ({
+  const [view, setView] = usePreservedViewState<{ contract: ApiContract; endpoint: EndpointIdentity | null; expanded: string | null }>('api:endpoint', () => ({
     contract, endpoint: contract.endpoints[0] ?? null, expanded: null,
   }));
   const selected = contract.endpoints.find((endpoint) => endpoint.id === view.endpoint?.id)
@@ -278,7 +278,7 @@ function EndpointExplorer({ contract }: { contract: ApiContract }) {
 
 function ApiContractContent({ mapId, productName }: { mapId: string; productName: string }) {
   const generateTriggerRef = useRef<HTMLButtonElement>(null);
-  const [lastAction, setLastAction] = useState<'load' | 'generate' | 'download'>('load');
+  const [lastAction, setLastAction] = usePreservedViewState<'load' | 'generate' | 'download'>('ApiContractView:last-action', 'load');
   const {
     record: contract, isLoading, isRunning, isReloading, isWorking, error,
     resultRevision, downloaded, runGeneration, runDownload, runReload,
@@ -317,13 +317,13 @@ function ApiContractContent({ mapId, productName }: { mapId: string; productName
               : isLoading ? 'Loading saved contract.' : 'No contract is currently displayed.'}
           </p>
         </div>
-        <div className={styles.actions}>
-          {contract && <ActionButton data-contract-export compactPending variant="secondary"
+        <ArtifactActions>
+          {contract && <ArtifactActionButton action="export" title="Export OpenAPI JSON" data-contract-export variant="secondary"
             onClick={(event) => void handleDownload(event.currentTarget)}
             state={error && lastAction === 'download' ? 'error' : downloaded ? 'success' : 'idle'}
             disabled={isWorking || isLoading} idleLabel="OpenAPI JSON" pendingLabel="Preparing OpenAPI JSON"
-            successLabel="Download again" errorLabel="Retry export" icon={<DownloadIcon size={14} weight="bold" />} />}
-          <ActionButton ref={generateTriggerRef} data-contract-action compactPending
+            successLabel="Download again" errorLabel="Retry export"  />}
+          <ArtifactActionButton action="generate" title={contract ? 'Regenerate API contract' : 'Generate API contract'} regenerate={Boolean(contract)} ref={generateTriggerRef} data-contract-action
             onClick={(event) => void handleRun(event.currentTarget)} disabled={isWorking}
             state={pending ? 'pending' : error && lastAction !== 'download' ? 'error' : resultRevision > 0 && contract ? 'success' : 'idle'}
             idleLabel={contract ? 'Regenerate' : 'Generate contract'}
@@ -331,7 +331,7 @@ function ApiContractContent({ mapId, productName }: { mapId: string; productName
             successLabel={contract ? 'Regenerate' : 'Generate contract'}
             errorLabel={lastAction === 'load' ? 'Retry loading' : 'Retry generation'}
             icon={<CodeIcon size={14} weight="bold" />} />
-        </div>
+        </ArtifactActions>
       </header>
       <MotionDisclosure isOpen={Boolean(error)}>
         <p role="alert" className={styles.error}>{error}</p>

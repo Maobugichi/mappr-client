@@ -21,7 +21,7 @@
 .fileIdentity h2 { color: var(--color-text); font: 500 14px/1.5 var(--font-mono); }
 .fileIcon { flex: none; color: var(--color-text-muted); }
 .version { color: var(--color-text-muted); font: 12px/1.6 var(--font-body); }
-.actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; max-width: 100%; margin-left: auto; }
+.actions { justify-content: flex-end; margin-left: auto; }
 .outline summary {
   display: inline-flex;
   align-items: center;

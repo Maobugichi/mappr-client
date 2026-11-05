@@ -4,24 +4,28 @@
 .title { color: var(--color-text); font: 600 20px/1.4 var(--font-display); }
 .hint { margin-top: 8px; color: var(--color-text-muted); font: 14px/1.7 var(--font-body); }
 .workspace { display: flex; flex-direction: column; gap: 24px; min-width: 0; }
-.navigator { min-width: 0; max-width: 100%; }
+/* Workspace tabs scroll with the document, so no navigation offset remains
+   above the pinned, opaque roadmap. Keep task stacking below this surface. */
+.navigator { position: sticky; top: 0; z-index: 10; isolation: isolate; min-width: 0; max-width: 100%; background: var(--color-canvas); border-bottom: 1px solid var(--color-canvas-grid); }
 .phaseScroller { min-width: 0; max-width: 100%; padding: 4px 4px 12px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; scrollbar-color: var(--color-trace) transparent; }
 .phaseTrack { position: relative; isolation: isolate; direction: ltr; width: max-content; min-width: 100%; }
 .phaseList { display: flex; align-items: stretch; gap: 24px; }
 .phaseList > li { flex: 1 0 14rem; width: 14rem; min-width: 0; }
 .phaseButton { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 12px; width: 100%; height: 100%; padding: 12px 8px 18px; border-radius: 3px; text-align: center; cursor: pointer; }
-.phaseNumber { display: grid; flex: none; place-items: center; min-width: 28px; height: 28px; padding-inline: 4px; border: 1px solid var(--color-canvas-grid); border-radius: 999px; background: var(--color-canvas); color: var(--color-text-muted); font: 12px/1 var(--font-mono); font-variant-numeric: tabular-nums; transition: border-color var(--motion-fast) var(--motion-ease-standard), color var(--motion-fast) var(--motion-ease-standard), background-color var(--motion-fast) var(--motion-ease-standard); }
+.phaseNumber { display: grid; flex: none; place-items: center; min-width: 28px; height: 28px; padding-inline: 4px; border: 1px solid color-mix(in srgb, var(--color-text-muted) 65%, var(--color-canvas-grid)); border-radius: 999px; background: var(--color-canvas); color: var(--color-text-muted); font: 12px/1 var(--font-mono); font-variant-numeric: tabular-nums; transition: border-color var(--motion-fast) var(--motion-ease-standard), color var(--motion-fast) var(--motion-ease-standard), background-color var(--motion-fast) var(--motion-ease-standard); }
 .phaseButton[data-in-path='true'] .phaseNumber { border-color: color-mix(in srgb, var(--color-signal) 55%, var(--color-canvas-grid)); }
 .phaseButton:hover .phaseNumber { border-color: var(--color-trace); }
 .phaseButton[aria-selected='true'] .phaseNumber { border-color: var(--color-signal); background: var(--color-signal); color: var(--color-canvas); }
 .phaseName { min-width: 0; width: 100%; color: var(--color-text-muted); font: 600 16px/1.5 var(--font-display); overflow-wrap: anywhere; transition: color var(--motion-fast) var(--motion-ease-standard); }
-.phaseButton[data-in-path='true'] .phaseName, .phaseButton:hover .phaseName { color: var(--color-text); }
+.phaseButton:hover .phaseName { color: var(--color-text); }
 .phaseButton[aria-selected='true'] .phaseName { color: var(--color-signal); }
+.phaseButton:focus-visible { outline: 2px solid var(--color-signal); outline-offset: -2px; }
 .phaseRail { position: absolute; z-index: 0; display: none; top: var(--phase-rail-y); left: var(--phase-rail-x); width: var(--phase-rail-width); height: 2px; border-radius: 999px; background: color-mix(in srgb, var(--color-text-muted) 35%, transparent); transform: translateY(-50%); overflow: hidden; pointer-events: none; }
 .phaseRailFill { display: block; width: var(--phase-rail-fill); height: 100%; background: var(--color-signal); transition: width var(--motion-standard) var(--motion-ease-standard); }
 .phaseIndicator { position: absolute; z-index: 2; inset: 0 auto auto 0; display: none; width: var(--phase-indicator-width); height: var(--phase-indicator-height); border: 1px solid var(--color-signal); border-radius: 999px; transform: translate(var(--phase-indicator-x), var(--phase-indicator-y)); pointer-events: none; transition: transform var(--motion-standard) var(--motion-ease-standard), width var(--motion-standard) var(--motion-ease-standard), height var(--motion-standard) var(--motion-ease-standard); }
 .phaseTrack[data-ready='true'] .phaseRail, .phaseTrack[data-ready='true'] .phaseIndicator { display: block; }
 .taskWorkspace, .taskPanel { min-width: 0; }
+.taskWorkspace { position: relative; z-index: 0; }
 .phaseContent { animation: phaseReveal var(--motion-standard) var(--motion-ease-enter); }
 .phaseHeader { margin-bottom: 20px; }
 .phaseHeading { min-width: 0; }
@@ -37,13 +41,58 @@
 .features { display: flex; flex-wrap: wrap; gap: 6px 12px; }
 .features li { min-width: 0; max-width: 100%; color: var(--color-trace); font: 12px/1.7 var(--font-body); overflow-wrap: anywhere; }
 .empty { color: var(--color-text-muted); font: 14px/1.8 var(--font-body); }
+.phaseControls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 24px; }
+.previousPhase {
+  --phase-action-background: #22364c;
+  --phase-action-border: #5f7994;
+  --phase-action-hover-background: #304963;
+  --phase-action-hover-border: #88a3bc;
+  --phase-action-text: var(--color-text);
+}
+.nextPhase {
+  margin-left: auto;
+  --phase-action-background: var(--color-signal);
+  --phase-action-border: var(--color-signal);
+  --phase-action-hover-background: #ffba49;
+  --phase-action-hover-border: #ffba49;
+  --phase-action-text: #101c2d;
+}
+.phaseControls .phaseAction[data-compact-pending='true'] {
+  height: 44px;
+  min-height: 44px;
+  background: var(--phase-action-background);
+  border-color: var(--phase-action-border);
+  color: var(--phase-action-text);
+  transition: background-color var(--motion-fast) var(--motion-ease-standard), border-color var(--motion-fast) var(--motion-ease-standard), color var(--motion-fast) var(--motion-ease-standard);
+}
+.phaseControls .phaseAction:enabled:hover {
+  opacity: 1;
+  background: var(--phase-action-hover-background);
+  border-color: var(--phase-action-hover-border);
+}
+.phaseControls .phaseAction:enabled:active {
+  background: var(--phase-action-background);
+  border-color: var(--phase-action-border);
+}
+.phaseControls .phaseAction:focus-visible { outline: 2px solid var(--color-trace); outline-offset: 3px; }
 @keyframes phaseReveal { from { opacity: 0; transform: translateY(var(--motion-distance)); } to { opacity: 1; transform: translateY(0); } }
+@container (max-width: 1100px) {
+  .phaseList { gap: 12px; }
+  .phaseList > li { flex-basis: 9.5rem; width: 9.5rem; }
+  .phaseName { font-size: 14px; }
+}
+@container (max-width: 639px) {
+  .phaseScroller { padding-bottom: 8px; }
+  .phaseList { gap: 8px; }
+  .phaseList > li { flex-basis: 52px; width: 52px; }
+  .phaseButton { min-width: 44px; min-height: 44px; gap: 0; padding: 8px; }
+  .phaseName { display: none; }
+}
 @container (max-width: 480px) {
-  .phaseList { gap: 16px; }
-  .phaseList > li { flex-basis: 12rem; width: 12rem; }
   .task { gap: 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .phaseNumber, .phaseName, .phaseIndicator, .phaseRailFill { transition: none; }
   .phaseContent { animation: none; }
+  .phaseControls .phaseAction[data-compact-pending='true'] { transition: none; }
 }

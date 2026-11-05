@@ -1,12 +1,13 @@
 'use client';
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { CheckIcon, CopyIcon, DownloadIcon, GearSixIcon, WarningIcon } from '@phosphor-icons/react';
+import { CheckIcon, CopyIcon, GearSixIcon, WarningIcon } from '@phosphor-icons/react';
 import type { EnvVar, MapprSystem } from '@/lib/api';
 import { getEnvVars, getEnvVarsFile, runEnvVars } from '@/lib/api';
 import { assertSafeEnvTemplate, envExamplePolicy, UnsafeEnvExampleError } from '@/lib/env-vars-reference';
 import { useGeneratedArtifact } from '@/lib/use-generated-artifact';
-import { ActionButton } from './ActionButton';
+import { usePreservedViewState } from '@/lib/artifact-workspace';
+import { ArtifactActionButton, ArtifactActions } from './ArtifactActions';
 import { MotionDisclosure } from './MotionDisclosure';
 import styles from './EnvVarsView.module.css';
 
@@ -98,7 +99,7 @@ function EnvVarRow({ envVar }: { envVar: EnvVar }) {
 
 function EnvVarsContent({ mapId, nodes }: { mapId: string; nodes: MapprSystem['architecture']['nodes'] }) {
   const contentId = useId();
-  const [lastAction, setLastAction] = useState<'load' | 'generate' | 'download'>('load');
+  const [lastAction, setLastAction] = usePreservedViewState<'load' | 'generate' | 'download'>('EnvVarsView:last-action', 'load');
   const [exportIssue, setExportIssue] = useState<string | null>(null);
   const actionPending = useRef(false);
   const exportEpoch = useRef(0);
@@ -145,18 +146,17 @@ function EnvVarsContent({ mapId, nodes }: { mapId: string; nodes: MapprSystem['a
       <div><h2>Environment Variables</h2>
         {record && <p className={styles.summary}>{record.vars.length} variable{record.vars.length === 1 ? '' : 's'} identified</p>}
       </div>
-      <div className={styles.actions}>
-        {record && <ActionButton compactPending variant="secondary" disabled={isLoading || isWorking}
+      <ArtifactActions>
+        {record && <ArtifactActionButton action="export" title="Export .env.example" variant="secondary" disabled={isLoading || isWorking}
           onClick={(event) => void handleDownload(event.currentTarget)}
           state={isDownloading ? 'pending' : error && lastAction === 'download' ? 'error' : downloaded ? 'success' : 'idle'}
-          idleLabel=".env.example" pendingLabel="Preparing .env.example download" successLabel=".env.example" errorLabel="Retry export"
-          icon={<DownloadIcon size={14} weight="bold" />} />}
-        <ActionButton compactPending disabled={isLoading || isWorking}
+          idleLabel=".env.example" pendingLabel="Preparing .env.example download" successLabel=".env.example" errorLabel="Retry export" />}
+        <ArtifactActionButton action="generate" title={record ? 'Regenerate environment variables' : 'Generate environment variables'} regenerate={Boolean(record)} disabled={isLoading || isWorking}
           onClick={(event) => void handleGenerate(event.currentTarget)}
           state={isLoading || isRunning ? 'pending' : error && lastAction === 'generate' ? 'error' : 'idle'}
           idleLabel={record ? 'Regenerate' : 'Generate Variables'} pendingLabel={isLoading ? 'Loading saved environment variables' : 'Generating environment variables'}
           errorLabel="Retry generation" icon={<GearSixIcon size={14} weight="bold" />} />
-      </div>
+      </ArtifactActions>
     </header>
     <MotionDisclosure isOpen={Boolean(displayedError)}><p role="alert" className={styles.error}>{displayedError}</p></MotionDisclosure>
     {sections.length > 1 && <nav className={styles.serviceNav} aria-label="Environment variable services">

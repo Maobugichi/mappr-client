@@ -1,5 +1,6 @@
 .overview { container-type: inline-size; --overview-sticky-top: 24px; display: flex; flex-direction: column; gap: 24px; min-width: 0; }
 .product { max-width: 88ch; }
+.capabilitiesToggle { display: none; }
 .eyebrow {
   margin-bottom: 6px;
   color: var(--color-text-muted);
@@ -30,7 +31,15 @@
 .sectionTitle { color: var(--color-text); font: 600 18px/1.4 var(--font-display); }
 .sectionHint { margin: 8px 0 16px; color: var(--color-text-muted); font: 12px/1.6 var(--font-body); }
 .featureList { border-top: 1px solid var(--color-canvas-grid); }
-.featureMap { position: relative; padding-left: 32px; isolation: isolate; }
+.featureMap {
+  --dependency-rest: #557d8c;
+  --dependency-hover: #72a7b4;
+  --dependency-selected: #8abcc9;
+  --dependency-secondary: #536f86;
+  position: relative;
+  padding-left: 32px;
+  isolation: isolate;
+}
 .dependencyLines {
   position: absolute;
   inset: 0;
@@ -38,18 +47,24 @@
   width: 100%;
   height: 100%;
   pointer-events: none;
+  color: var(--dependency-rest);
   opacity: 0;
-  transition: opacity var(--motion-fast) var(--motion-ease-standard);
+  transition: opacity var(--motion-fast) var(--motion-ease-standard), color var(--motion-fast) var(--motion-ease-standard);
 }
 .dependencyLines[data-visible='true'][data-ready='true'] { opacity: 1; }
+.featureMap:has(.feature:not([data-dependency-role]):focus-within) .dependencyLines { color: var(--dependency-secondary); }
+@media (hover: hover) {
+  .featureMap:has(.feature[data-dependency-role]:hover) .dependencyLines { color: var(--dependency-hover); }
+}
+.featureMap:has(.feature[data-dependency-role]:focus-within) .dependencyLines { color: var(--dependency-selected); }
 .dependencyLines path {
   fill: none;
-  stroke: var(--color-trace);
+  stroke: currentColor;
   stroke-width: 1.75;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.dependencyLines circle { fill: var(--color-canvas); stroke: var(--color-trace); stroke-width: 1.5; }
+.dependencyLines circle { fill: var(--color-canvas); stroke: currentColor; stroke-width: 1.5; }
 .dependencyGroup { animation: dependencyReveal var(--motion-fast) var(--motion-ease-standard); }
 @keyframes dependencyReveal { from { opacity: 0; } to { opacity: 1; } }
 .dependencyLabel { display: inline-flex; align-items: center; gap: 5px; color: var(--color-trace); }
@@ -132,6 +147,50 @@
   .requirements[data-fits-viewport='true'] { position: sticky; top: var(--overview-sticky-top); }
 }
 @media (max-width: 600px) {
+  .capabilitiesToggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 44px;
+    max-width: 100%;
+    margin-top: 4px;
+    padding: 6px 4px;
+    border-radius: 3px;
+    color: color-mix(in srgb, var(--color-trace) 80%, var(--color-text-muted));
+    font: 500 12px/1.5 var(--font-body);
+    text-align: left;
+    cursor: pointer;
+    transition: color var(--motion-fast) var(--motion-ease-standard), background-color var(--motion-fast) var(--motion-ease-standard);
+  }
+  .capabilitiesToggle:hover { color: var(--color-trace); background: var(--color-surface); }
+  .capabilitiesToggle:active { background: var(--color-surface-raised); }
+  .capabilitiesToggle:focus-visible { outline: 2px solid var(--color-trace); outline-offset: 2px; }
+  .capabilitiesChevron { flex: none; transition: transform var(--motion-fast) var(--motion-ease-standard); }
+  .capabilitiesToggle[aria-expanded='true'] .capabilitiesChevron { transform: rotate(180deg); }
+  /* Keep the list mounted through closing. CSS-only responsive visibility
+     leaves desktop content accessible regardless of the mobile toggle state. */
+  .capabilitiesRegion {
+    display: grid;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: grid-template-rows var(--motion-standard) var(--motion-ease-enter),
+      opacity var(--motion-standard) var(--motion-ease-enter),
+      visibility 0s linear var(--motion-standard);
+  }
+  .capabilitiesRegion[data-expanded='true'] {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transition-delay: 0s;
+  }
+  .capabilitiesContent { min-height: 0; overflow: hidden; }
+  .productCapabilities li {
+    background: color-mix(in srgb, var(--color-trace) 4%, var(--color-canvas));
+    color: color-mix(in srgb, var(--color-trace) 75%, var(--color-text-muted));
+  }
   .overview { gap: 20px; }
   .snapshot { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 0; }
   .snapshot > div { padding-inline: 14px; }
@@ -142,6 +201,7 @@
   .featureDetails { padding-inline: 10px; }
 }
 @media (prefers-reduced-motion: reduce) {
+  .capabilitiesToggle, .capabilitiesChevron, .capabilitiesRegion { transition: none; }
   .chevron { transition: none; }
   .dependencyLines { transition: none; }
   .dependencyGroup { animation: none; }

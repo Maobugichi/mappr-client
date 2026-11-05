@@ -1,9 +1,9 @@
-.reference { min-width: 0; padding: 24px; border: 1px solid var(--color-canvas-grid); border-radius: 8px; background: var(--color-canvas); }
+.reference { container-type: inline-size; min-width: 0; padding: 24px; border: 1px solid var(--color-canvas-grid); border-radius: 8px; background: var(--color-canvas); }
 .header { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 16px 24px; }
 .header > div { min-width: 0; }
 .header h2 { color: var(--color-text); font: 600 16px/1.5 var(--font-display); }
 .summary { margin-top: 4px; color: var(--color-text-muted); font: 13px/1.7 var(--font-body); }
-.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; max-width: 100%; }
+
 .serviceNav { max-width: 100%; margin-top: 16px; padding-bottom: 8px; border-bottom: 1px solid var(--color-canvas-grid); overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; scrollbar-color: var(--color-trace) transparent; }
 .serviceNav ul { display: flex; gap: 4px; width: max-content; margin: 0; padding: 2px 0; list-style: none; }
 .serviceNav li { flex: none; }

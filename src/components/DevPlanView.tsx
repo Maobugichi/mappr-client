@@ -1,7 +1,9 @@
 'use client';
 
 import { useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { ArrowLeftIcon, ArrowRightIcon } from '@phosphor-icons/react';
 import type { MapprSystem } from '@/lib/api';
+import { ActionButton } from './ActionButton';
 import styles from './DevPlanView.module.css';
 
 export function DevPlanView({ developmentPlan, features }: {
@@ -11,6 +13,8 @@ export function DevPlanView({ developmentPlan, features }: {
   const roadmapId = useId();
   const scrollerRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
+  const navigatorRef = useRef<HTMLElement>(null);
+  const phaseHeaderRef = useRef<HTMLElement>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const phases = useMemo(() => developmentPlan
     .map((phase, index) => ({ ...phase, key: phase.phase + '-' + index }))
@@ -18,7 +22,16 @@ export function DevPlanView({ developmentPlan, features }: {
     .sort((a, b) => a.phase - b.phase), [developmentPlan]);
   const selected = phases.find((phase) => phase.key === selectedKey) ?? phases[0];
   const selectedIndex = selected ? phases.indexOf(selected) : -1;
+  const selectionRequest = useRef({ key: selected?.key, reveal: false, focusHeading: false });
   const nameById = useMemo(() => new Map(features.map((feature) => [feature.id, feature.name])), [features]);
+
+  const selectPhase = (key: string, focusHeading = false) => {
+    // Track the latest intent synchronously, even before React commits a rapid
+    // sequence of clicks. Re-selecting that phase does not restart scrolling.
+    if (selectionRequest.current.key === key) return;
+    selectionRequest.current = { key, reveal: true, focusHeading };
+    setSelectedKey(key);
+  };
 
   useLayoutEffect(() => {
     const scroller = scrollerRef.current, track = trackRef.current;
@@ -58,6 +71,21 @@ export function DevPlanView({ developmentPlan, features }: {
     return () => observer.disconnect();
   }, [phases, selected?.key]);
 
+  useLayoutEffect(() => {
+    const request = selectionRequest.current;
+    selectionRequest.current = { key: selected?.key, reveal: false, focusHeading: false };
+    const navigator = navigatorRef.current, heading = phaseHeaderRef.current;
+    if (!request.reveal || request.key !== selected?.key || !navigator || !heading) return;
+    // The workspace navigation is in normal flow; the document is the page's
+    // scroll container. Measure the responsive roadmap instead of assuming its
+    // height, and leave a small reading gap below its sticky edge.
+    const top = parseFloat(getComputedStyle(navigator).top) || 0;
+    const offset = top + navigator.getBoundingClientRect().height + 16;
+    const target = Math.max(0, window.scrollY + heading.getBoundingClientRect().top - offset);
+    if (request.focusHeading) heading.querySelector<HTMLHeadingElement>('h3')?.focus({ preventScroll: true });
+    window.scrollTo({ top: target, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+  }, [selected?.key]);
+
   const navigatePhases = (event: KeyboardEvent<HTMLOListElement>) => {
     if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey
       || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
@@ -67,7 +95,7 @@ export function DevPlanView({ developmentPlan, features }: {
     event.preventDefault();
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
       : (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
-    setSelectedKey(phases[next].key);
+    selectPhase(phases[next].key);
     tabs[next].focus({ preventScroll: true });
   };
 
@@ -81,7 +109,7 @@ export function DevPlanView({ developmentPlan, features }: {
 
       {!selected ? <p className={styles.empty}>No development phases have been defined for this map.</p> : (
         <div className={styles.workspace}>
-          <nav className={styles.navigator} aria-label="Roadmap phase navigation">
+          <nav ref={navigatorRef} className={styles.navigator} aria-label="Roadmap phase navigation">
             <div ref={scrollerRef} className={styles.phaseScroller}>
               <div ref={trackRef} className={styles.phaseTrack}>
                 <ol role="tablist" aria-label="Development phases" aria-orientation="horizontal"
@@ -90,9 +118,10 @@ export function DevPlanView({ developmentPlan, features }: {
                     <li key={phase.key} role="presentation">
                       <button type="button" role="tab" id={roadmapId + '-phase-' + phase.key}
                         data-phase={phase.phase} aria-selected={selected.key === phase.key}
+                        aria-label={'Phase ' + phase.phase + ': ' + phase.title}
                         data-in-path={index <= selectedIndex}
                         aria-controls={roadmapId + '-tasks-' + phase.key} tabIndex={selected.key === phase.key ? 0 : -1}
-                        className={styles.phaseButton} onClick={() => setSelectedKey(phase.key)}>
+                        className={styles.phaseButton} onClick={() => selectPhase(phase.key)}>
                         <span className={styles.phaseNumber} data-phase-node><span className="sr-only">Phase </span>{phase.phase}</span>
                         <span className={styles.phaseName}>{phase.title}</span>
                       </button>
@@ -112,10 +141,10 @@ export function DevPlanView({ developmentPlan, features }: {
                 tabIndex={0} className={styles.taskPanel}>
                 {selected.key === phase.key && (
                   <div className={styles.phaseContent}>
-                    <header className={styles.phaseHeader}>
+                    <header ref={phaseHeaderRef} className={styles.phaseHeader}>
                       <div className={styles.phaseHeading}>
                         <p className={styles.eyebrow}>Phase {phase.phase}</p>
-                        <h3 className={styles.selectedTitle}>{phase.title}</h3>
+                        <h3 className={styles.selectedTitle} tabIndex={-1}>{phase.title}</h3>
                         <p className={styles.taskCount}>{phase.items.length} {phase.items.length === 1 ? 'task' : 'tasks'} in this phase</p>
                       </div>
                     </header>
@@ -148,6 +177,17 @@ export function DevPlanView({ developmentPlan, features }: {
                         })}
                       </ol>
                     )}
+                    {phases.length > 1 && <div className={styles.phaseControls}>
+                      {selectedIndex > 0 && <ActionButton compactPending variant="secondary"
+                        className={`${styles.phaseAction} ${styles.previousPhase}`}
+                        idleLabel="Previous phase" pendingLabel="Previous phase"
+                        icon={<ArrowLeftIcon size={14} weight="bold" />}
+                        onClick={() => selectPhase(phases[selectedIndex - 1].key, true)} />}
+                      {selectedIndex < phases.length - 1 && <ActionButton compactPending variant="primary"
+                        className={`${styles.phaseAction} ${styles.nextPhase}`} idleLabel="Next phase" pendingLabel="Next phase"
+                        icon={<ArrowRightIcon size={14} weight="bold" />}
+                        onClick={() => selectPhase(phases[selectedIndex + 1].key, true)} />}
+                    </div>}
                   </div>
                 )}
               </div>

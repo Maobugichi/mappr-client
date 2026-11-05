@@ -1,11 +1,11 @@
 'use client';
 
 import { useMemo, useRef } from 'react';
-import { DownloadIcon, RocketLaunchIcon } from '@phosphor-icons/react';
+import { RocketLaunchIcon } from '@phosphor-icons/react';
 import { getDeployment, getDeploymentMarkdown, runDeployment } from '@/lib/api';
 import { prepareDeploymentDocument } from '@/lib/deployment-runbook';
 import { useGeneratedArtifact } from '@/lib/use-generated-artifact';
-import { ActionButton } from './ActionButton';
+import { ArtifactActionButton, ArtifactActions } from './ArtifactActions';
 import { DeploymentMarkdown } from './DeploymentMarkdown';
 import { MotionDisclosure } from './MotionDisclosure';
 import styles from './DeploymentView.module.css';
@@ -78,15 +78,14 @@ function DeploymentContent({ mapId }: { mapId: string }) {
             <p role="status" aria-atomic="true" className="sr-only">{statusMessage}</p>
           </div>
 
-          <div className="flex w-full shrink-0 flex-wrap items-center gap-2 lg:w-auto">
+          <ArtifactActions>
             {preview && (
-              <ActionButton compactPending variant="secondary"
+              <ArtifactActionButton action="export" title="Export deployment Markdown" variant="secondary"
                 onClick={(event) => void handleDownload(event.currentTarget)}
                 disabled={isWorking || isLoading}
-                idleLabel="Markdown export" pendingLabel="Preparing deployment download"
-                icon={<DownloadIcon size={14} weight="bold" />} />
+                idleLabel="Markdown export" pendingLabel="Preparing deployment download" />
             )}
-            <ActionButton compactPending
+            <ArtifactActionButton action="generate" title={preview ? 'Regenerate deployment plan' : 'Generate deployment plan'} regenerate={Boolean(preview)}
               ref={generateTriggerRef}
               onClick={(event) => void runGeneration(event.currentTarget)}
               disabled={isWorking || isLoading}
@@ -94,7 +93,7 @@ function DeploymentContent({ mapId }: { mapId: string }) {
               idleLabel={preview ? 'Regenerate' : 'Generate Plan'}
               pendingLabel={isLoading || isReloading ? 'Loading saved deployment plan' : 'Generating deployment plan and preparing its preview'}
               icon={<RocketLaunchIcon size={14} weight="bold" />} />
-          </div>
+          </ArtifactActions>
         </div>
 
         <MotionDisclosure isOpen={Boolean(error)}>

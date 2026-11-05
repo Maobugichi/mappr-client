@@ -23,6 +23,16 @@ function defaultFixInstruction(feature: MapprSystem['features'][number]): string
   return `Add an architecture component for the feature "${feature.name}": ${feature.description}`;
 }
 
+function dependencyRoute(x: number, y: number, tx: number, ty: number): string {
+  const lane = Math.max(6, Math.min(x, tx) - 20);
+  const direction = ty >= y ? 1 : -1;
+  // Keep both elbows inside the existing gutter. Short routes use a smaller
+  // radius so their bends meet cleanly without overshooting either endpoint.
+  const radius = Math.max(0, Math.min(6, Math.abs(ty - y) / 2, (x - lane) / 2, (tx - lane) / 2));
+  return `M ${x} ${y} H ${lane + radius} Q ${lane} ${y} ${lane} ${y + direction * radius}`
+    + ` V ${ty - direction * radius} Q ${lane} ${ty} ${lane + radius} ${ty} H ${tx}`;
+}
+
 export function Overview({ mapId, product, features, architecture, onSystemUpdated }: {
   mapId: string;
   product: MapprSystem['product'];
@@ -33,6 +43,7 @@ export function Overview({ mapId, product, features, architecture, onSystemUpdat
   const nameById = new Map(features.map((feature) => [feature.id, feature.name]));
   const nodeById = new Map(architecture.nodes.map((node) => [node.id, node]));
   const contentId = useId();
+  const [capabilitiesExpanded, setCapabilitiesExpanded] = useState(false);
   const featureTriggers = useRef(new Map<string, HTMLButtonElement>());
   const featureCards = useRef(new Map<string, HTMLLIElement>());
   const featureMapRef = useRef<HTMLDivElement>(null);
@@ -267,10 +278,9 @@ export function Overview({ mapId, product, features, architecture, onSystemUpdat
         const tx = targetRect.left - origin.left;
         const ty = id === activeDependency.sourceId ? y + 12
           : targetHeader.top + targetHeader.height / 2 - origin.top;
-        const lane = Math.max(6, Math.min(x, tx) - 20);
         const [route, arrow] = group.querySelectorAll('path');
         const [start, end] = group.querySelectorAll('circle');
-        route.setAttribute('d', `M ${x} ${y} H ${lane} V ${ty} H ${tx}`);
+        route.setAttribute('d', dependencyRoute(x, y, tx, ty));
         arrow.setAttribute('d', `M ${tx - 10} ${ty - 3} l 3 3 l -3 3`);
         start.setAttribute('cx', String(x));
         start.setAttribute('cy', String(y));
@@ -296,9 +306,23 @@ export function Overview({ mapId, product, features, architecture, onSystemUpdat
       <section aria-label="Product blueprint" className={styles.product}>
         <p className={styles.eyebrow}>Product blueprint</p>
         <p className={styles.summary}>{product.summary}</p>
-        {product.concepts.length > 0 && <ul aria-label="Product concepts" className={styles.tags}>
-          {product.concepts.map((concept) => <li key={concept}>{concept}</li>)}
-        </ul>}
+        {product.concepts.length > 0 && <>
+          <button type="button" className={styles.capabilitiesToggle}
+            aria-expanded={capabilitiesExpanded} aria-controls={`${contentId}-product-capabilities`}
+            onClick={() => setCapabilitiesExpanded((expanded) => !expanded)}>
+            {capabilitiesExpanded ? 'Hide capabilities'
+              : `View ${product.concepts.length} ${product.concepts.length === 1 ? 'capability' : 'capabilities'}`}
+            <CaretDownIcon size={14} aria-hidden="true" className={styles.capabilitiesChevron} />
+          </button>
+          <div id={`${contentId}-product-capabilities`} role="region" aria-label="Product capabilities"
+            className={styles.capabilitiesRegion} data-expanded={capabilitiesExpanded}>
+            <div className={styles.capabilitiesContent}>
+              <ul aria-label="Product concepts" className={`${styles.tags} ${styles.productCapabilities}`}>
+                {product.concepts.map((concept) => <li key={concept}>{concept}</li>)}
+              </ul>
+            </div>
+          </div>
+        </>}
       </section>
 
       <dl aria-label="System snapshot" className={styles.snapshot}>

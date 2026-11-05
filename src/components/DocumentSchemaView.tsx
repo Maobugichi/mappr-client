@@ -1,19 +1,24 @@
 ﻿'use client';
 
-import { useState } from 'react';
-import { DatabaseIcon, DownloadIcon } from '@phosphor-icons/react';
+import { useEffect, type ReactNode } from 'react';
+import { DatabaseIcon } from '@phosphor-icons/react';
 import { getDocumentSchema, getDocumentSchemaScript, runDocumentSchema } from '@/lib/api';
 import { useSchemaArtifact } from '@/lib/use-schema-artifact';
-import { ActionButton } from './ActionButton';
+import { usePreservedViewState } from '@/lib/artifact-workspace';
+import { ArtifactActionButton, ArtifactActions } from './ArtifactActions';
 import { MotionDisclosure } from './MotionDisclosure';
 import { SchemaExplorer } from './SchemaExplorer';
+import { SchemaEngineBadge } from './SchemaEngineSelect';
 import styles from './SchemaView.module.css';
 
 function slugify(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
-export function DocumentSchemaView({ mapId, productName }: { mapId: string; productName: string }) {
+export function DocumentSchemaView({ mapId, productName, modeControls, onAvailabilityChange }: {
+  mapId: string; productName: string; modeControls?: ReactNode;
+  onAvailabilityChange?: (available: boolean | null) => void;
+}) {
   const {
     schema, isLoading, isRunning, isDownloading, isReloading, isWorking, error,
     resultRevision, downloaded, runGeneration, runDownload, runReload,
@@ -21,7 +26,9 @@ export function DocumentSchemaView({ mapId, productName }: { mapId: string; prod
     mapId, load: getDocumentSchema, generate: runDocumentSchema,
     label: 'document schema', exportError: 'Something went wrong rendering the script.',
   });
-  const [lastAction, setLastAction] = useState<'load' | 'generate' | 'download'>('load');
+  const [lastAction, setLastAction] = usePreservedViewState<'load' | 'generate' | 'download'>('DocumentSchemaView:last-action', 'load');
+  const available = schema ? true : isLoading || isReloading ? null : false;
+  useEffect(() => { onAvailabilityChange?.(available); }, [available, onAvailabilityChange]);
   const handleRun = (trigger: HTMLButtonElement) => {
     if (lastAction === 'load' && error) return runReload(trigger);
     setLastAction('generate');
@@ -45,26 +52,29 @@ export function DocumentSchemaView({ mapId, productName }: { mapId: string; prod
       <header className={styles.header}>
         <div className={styles.headingCopy}>
           <p className={styles.eyebrow}>Document schema</p>
-          <h2 className={styles.title}>Schema Explorer</h2>
+          <h2 tabIndex={-1} className={styles.title}>Schema Explorer</h2>
           <p role="status" aria-atomic="true" className={styles.version}>
             {schema ? `Displayed schema v${schema.version} · ${schema.collections.length} collection${schema.collections.length === 1 ? '' : 's'}`
               : 'No document schema is currently displayed.'}
           </p>
         </div>
-        <div className={styles.actions}>
-          {schema && <ActionButton data-schema-export compactPending variant="secondary" disabled={isWorking}
+        <ArtifactActions>
+          {modeControls}
+          {schema && <><SchemaEngineBadge name="MongoDB" />
+          <ArtifactActionButton action="export" data-schema-export variant="secondary" disabled={isWorking} title="Export MongoDB JavaScript"
             onClick={(event) => void handleDownload(event.currentTarget)}
             state={isDownloading ? 'pending' : error && lastAction === 'download' ? 'error' : downloaded ? 'success' : 'idle'}
-            idleLabel="JavaScript export" pendingLabel="Preparing document schema JavaScript download"
-            successLabel="Download JavaScript again" errorLabel="Retry script export" icon={<DownloadIcon size={14} weight="bold" />} />}
-          <ActionButton data-schema-action compactPending disabled={isWorking}
+            idleLabel="Export MongoDB JavaScript" pendingLabel="Preparing document schema JavaScript download"
+            successLabel="Download JavaScript again" errorLabel="Retry script export"  /></>}
+          <ArtifactActionButton action="generate" regenerate={Boolean(schema)} data-schema-action disabled={isWorking} title={schema ? 'Regenerate document schema' : 'Generate document schema'}
             onClick={(event) => void handleRun(event.currentTarget)}
             state={pending ? 'pending' : error && lastAction !== 'download' ? 'error' : resultRevision > 0 && schema ? 'success' : 'idle'}
             idleLabel={schema ? 'Regenerate' : 'Generate schema'}
             pendingLabel={isLoading || isReloading ? 'Loading saved document schema' : 'Generating document schema'}
             successLabel={schema ? 'Regenerate' : 'Generate schema'}
-            errorLabel={lastAction === 'load' ? 'Retry loading' : 'Retry generation'} icon={<DatabaseIcon size={14} weight="bold" />} />
-        </div>
+            errorLabel={lastAction === 'load' ? 'Retry loading' : 'Retry generation'}
+            icon={<DatabaseIcon size={14} weight="bold" />} />
+        </ArtifactActions>
       </header>
       <MotionDisclosure isOpen={Boolean(error)}><p role="alert" className={styles.error}>{error}</p></MotionDisclosure>
       {schema ? schema.collections.length > 0 ? <SchemaExplorer mode="document" items={schema.collections} />

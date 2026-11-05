@@ -1,14 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { ApiError } from './api';
+import { useArtifactCache } from './artifact-workspace';
 import { downloadTextFile } from './markdown-export';
 
 type ArtifactDownload = { filename: string; content: string; mimeType: string };
-type Operation = 'generate' | 'download' | 'reload';
 
-// The owning view is keyed by mapId. Unmounting invalidates pending work;
-// generation and downloads share a lock so export contents stay consistent.
 export function useGeneratedArtifact<T>({
   mapId, load, generate, loadError, generationError, exportError,
 }: {
@@ -19,15 +17,25 @@ export function useGeneratedArtifact<T>({
   generationError: string;
   exportError: string;
 }) {
-  const [record, setRecord] = useState<T | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [operation, setOperation] = useState<Operation | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [resultRevision, setResultRevision] = useState(0);
-  const [downloaded, setDownloaded] = useState(false);
-  const operationRef = useRef<Operation | null>(null);
-  const epochRef = useRef(0);
+  const cache = useArtifactCache(mapId);
+  const entry = cache.get(load);
+  const { record, isLoading, operation, failure, resultRevision, downloaded } = useSyncExternalStore(
+    entry.subscribe, entry.getSnapshot, entry.getSnapshot,
+  );
+  const lifetime = useRef({ active: true });
   const focusTriggerRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    // Downloads belong to the mounted reader; generation belongs to the cache.
+    // A distinct lifetime also handles Strict Mode's effect replay safely.
+    const current = { active: true };
+    lifetime.current = current;
+    void entry.ensureLoaded(() => load(mapId));
+    return () => {
+      current.active = false;
+      focusTriggerRef.current = null;
+    };
+  }, [entry, load, mapId]);
 
   useEffect(() => {
     if (operation || !focusTriggerRef.current) return;
@@ -37,75 +45,35 @@ export function useGeneratedArtifact<T>({
     focusTriggerRef.current = null;
   }, [operation]);
 
-  useEffect(() => {
-    const epoch = ++epochRef.current;
-    let cancelled = false;
-    load(mapId)
-      .then((existing) => {
-        if (!cancelled) setRecord(existing);
-      })
-      .catch(() => {
-        if (!cancelled) setError(loadError);
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-      epochRef.current = epoch + 1;
-    };
-  }, [mapId, load, loadError]);
-
-  const execute = useCallback(async (
-    kind: Operation,
-    trigger: HTMLButtonElement,
-    task: (isCurrent: () => boolean) => Promise<void>,
-  ) => {
-    if (isLoading || operationRef.current) return;
-    operationRef.current = kind;
+  const rememberFocus = useCallback((trigger: HTMLButtonElement) => {
     focusTriggerRef.current = document.activeElement === trigger ? trigger : null;
-    const epoch = epochRef.current;
-    const isCurrent = () => epoch === epochRef.current;
-    setOperation(kind);
-    setError(null);
-    setDownloaded(false);
-    try {
-      await task(isCurrent);
-    } catch (err) {
-      if (isCurrent()) {
-        setError(err instanceof ApiError
-          ? (err.body.message ?? err.body.error)
-          : kind === 'generate' ? generationError : kind === 'download' ? exportError : loadError);
-      }
-    } finally {
-      operationRef.current = null;
-      if (isCurrent()) setOperation(null);
-    }
-  }, [isLoading, generationError, exportError, loadError]);
+  }, []);
 
-  const runGeneration = useCallback((trigger: HTMLButtonElement) => execute('generate', trigger, async (isCurrent) => {
-    const result = await generate(mapId);
-    if (!isCurrent()) return;
-    setRecord(result);
-    setResultRevision((revision) => revision + 1);
-  }), [execute, generate, mapId]);
+  const runGeneration = useCallback((trigger: HTMLButtonElement) => {
+    rememberFocus(trigger);
+    return entry.generate(() => generate(mapId));
+  }, [entry, generate, mapId, rememberFocus]);
 
   const runDownload = useCallback((trigger: HTMLButtonElement, render: () => Promise<ArtifactDownload>) => {
     if (!record) return;
-    return execute('download', trigger, async (isCurrent) => {
+    rememberFocus(trigger);
+    const current = lifetime.current;
+    return entry.download(async () => {
       const file = await render();
-      if (!isCurrent()) return;
+      if (!current.active) return false;
       downloadTextFile(file.filename, file.content, file.mimeType);
-      setDownloaded(true);
+      return true;
     });
-  }, [execute, record]);
+  }, [entry, record, rememberFocus]);
 
-  const runReload = useCallback((trigger: HTMLButtonElement) => execute('reload', trigger, async (isCurrent) => {
-    const existing = await load(mapId);
-    if (!isCurrent()) return;
-    setRecord(existing);
-    setResultRevision((revision) => revision + 1);
-  }), [execute, load, mapId]);
+  const runReload = useCallback((trigger: HTMLButtonElement) => {
+    rememberFocus(trigger);
+    return entry.reload(() => load(mapId));
+  }, [entry, load, mapId, rememberFocus]);
+
+  const error = !failure ? null : failure.kind === 'load' ? loadError
+    : failure.cause instanceof ApiError ? (failure.cause.body.message ?? failure.cause.body.error)
+    : failure.kind === 'generate' ? generationError : failure.kind === 'download' ? exportError : loadError;
 
   return {
     record, isLoading, error, resultRevision, downloaded,

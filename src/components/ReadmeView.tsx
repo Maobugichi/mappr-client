@@ -1,11 +1,12 @@
 'use client';
 
-import { useId, useMemo, useRef, useState } from 'react';
-import { FileTextIcon, DownloadIcon, ListIcon } from '@phosphor-icons/react';
+import { useId, useMemo, useRef } from 'react';
+import { FileTextIcon, ListIcon } from '@phosphor-icons/react';
 import { getReadme, getReadmeMarkdown, runReadme } from '@/lib/api';
 import { prepareReadmeDocument, type ReadmeDocument } from '@/lib/readme-markdown';
 import { useGeneratedArtifact } from '@/lib/use-generated-artifact';
-import { ActionButton } from './ActionButton';
+import { usePreservedViewState } from '@/lib/artifact-workspace';
+import { ArtifactActionButton, ArtifactActions } from './ArtifactActions';
 import { MotionDisclosure } from './MotionDisclosure';
 import { ReadmeMarkdown } from './ReadmeMarkdown';
 import styles from './ReadmeView.module.css';
@@ -48,7 +49,7 @@ function ReadmeOutline({ headings }: { headings: ReadmeDocument['headings'] }) {
 function ReadmeContent({ mapId }: { mapId: string }) {
   const documentId = useId();
   const generateTriggerRef = useRef<HTMLButtonElement>(null);
-  const [lastAction, setLastAction] = useState<'load' | 'generate' | 'download'>('load');
+  const [lastAction, setLastAction] = usePreservedViewState<'load' | 'generate' | 'download'>('ReadmeView:last-action', 'load');
   const {
     record: preview, isLoading, isRunning, isDownloading, isReloading, isWorking, error,
     downloaded, runGeneration, runDownload, runReload,
@@ -101,20 +102,19 @@ function ReadmeContent({ mapId }: { mapId: string }) {
           <h2>README.md</h2>
           {preview && <span className={styles.version}>v{preview.record.version}</span>}
         </div>
-        <div className={styles.actions}>
+        <ArtifactActions className={styles.actions}>
           {document && document.headings.length > 0 && <ReadmeOutline headings={document.headings} />}
-          {preview && <ActionButton compactPending variant="secondary" disabled={isWorking || isLoading}
+          {preview && <ArtifactActionButton action="export" title="Export README Markdown" variant="secondary" disabled={isWorking || isLoading}
             onClick={(event) => void handleDownload(event.currentTarget)}
             state={error && lastAction === 'download' ? 'error' : downloaded ? 'success' : 'idle'}
-            idleLabel="Markdown export" pendingLabel="Preparing README download" successLabel="Markdown export" errorLabel="Retry export"
-            icon={<DownloadIcon size={14} weight="bold" />} />}
-          <ActionButton ref={generateTriggerRef} compactPending disabled={isWorking || isLoading}
+            idleLabel="Markdown export" pendingLabel="Preparing README download" successLabel="Markdown export" errorLabel="Retry export" />}
+          <ArtifactActionButton action="generate" title={preview ? 'Regenerate README' : 'Generate README'} regenerate={Boolean(preview)} ref={generateTriggerRef} disabled={isWorking || isLoading}
             onClick={(event) => void handleGenerate(event.currentTarget)}
             state={pending ? 'pending' : error && lastAction === 'generate' ? 'error' : 'idle'}
             idleLabel={preview ? 'Regenerate' : 'Generate README'}
             pendingLabel={isLoading || isReloading ? 'Loading saved README' : 'Generating README and preparing its preview'}
             errorLabel="Retry generation" icon={<FileTextIcon size={14} weight="bold" />} />
-        </div>
+        </ArtifactActions>
       </header>
       <p role="status" aria-atomic="true" className="sr-only">{statusMessage}</p>
       <MotionDisclosure isOpen={Boolean(error)}>

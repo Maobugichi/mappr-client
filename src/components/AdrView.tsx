@@ -1,11 +1,12 @@
 'use client';
 
 import { useLayoutEffect, useRef, useState, type Ref } from 'react';
-import { ArrowLeftIcon, ArrowRightIcon, BookOpenTextIcon, CheckIcon, DownloadIcon } from '@phosphor-icons/react';
+import { ArrowLeftIcon, ArrowRightIcon, BookOpenTextIcon, CheckIcon } from '@phosphor-icons/react';
 import type { Adr, AdrSetRecord } from '@/lib/api';
 import { getAdrs, getAdrsMarkdown, runAdrs } from '@/lib/api';
 import { useGeneratedArtifact } from '@/lib/use-generated-artifact';
-import { ActionButton } from './ActionButton';
+import { usePreservedViewState } from '@/lib/artifact-workspace';
+import { ArtifactActionButton, ArtifactActions } from './ArtifactActions';
 import { MotionDisclosure } from './MotionDisclosure';
 import styles from './AdrView.module.css';
 
@@ -137,7 +138,7 @@ function AdrContent({ mapId, productName }: { mapId: string; productName: string
     exportError: 'Something went wrong rendering the Markdown.',
   });
   const [view, setView] = useState<{ source: AdrSetRecord | null; selected: Adr | null; notice: string | null }>({ source: record, selected: null, notice: null });
-  const [lastAction, setLastAction] = useState<'load' | 'generate' | 'download'>('load');
+  const [lastAction, setLastAction] = usePreservedViewState<'load' | 'generate' | 'download'>('AdrView:last-action', 'load');
   const libraryRef = useRef<HTMLDivElement>(null);
   const libraryHeadingRef = useRef<HTMLHeadingElement>(null);
   const readerHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -214,26 +215,28 @@ function AdrContent({ mapId, productName }: { mapId: string; productName: string
 
   return <div className={styles.workspace}>
     <header className={styles.header}>
-      <div>
+      <div className={styles.headingCopy}>
         <h2 ref={libraryHeadingRef} tabIndex={-1} className={styles.heading}>Decision library</h2>
         <p className={styles.summary}>{record
           ? `${record.adrs.length} decision${record.adrs.length === 1 ? '' : 's'} · Architecture Decision Records`
           : 'Architecture Decision Records'}</p>
       </div>
-      <div className={styles.actions}>
-        {record && <ActionButton compactPending variant="secondary"
-          state={error && lastAction === 'download' ? 'error' : downloaded ? 'success' : 'idle'}
+      <ArtifactActions>
+        {record && <ArtifactActionButton action="export" variant="secondary" title="Export ADR Markdown"
+          state={isDownloading ? 'pending' : error && lastAction === 'download' ? 'error' : downloaded ? 'success' : 'idle'}
           aria-label={isDownloading ? 'Preparing Markdown download' : undefined}
           idleLabel="Markdown export" pendingLabel="Preparing Markdown download" successLabel="Download again" errorLabel="Retry export"
-          icon={<DownloadIcon size={14} weight="bold" />} disabled={isLoading || isWorking}
+           disabled={isLoading || isWorking}
           onClick={(event) => void handleDownload(event.currentTarget)} />}
-        <ActionButton compactPending
+        <ArtifactActionButton action="generate" regenerate={Boolean(record)}
+          title={record ? 'Regenerate ADRs' : 'Generate ADRs'}
           state={primaryPending ? 'pending' : error && lastAction !== 'download' ? 'error' : 'idle'}
           idleLabel={actionLabel} pendingLabel={isLoading || isReloading ? 'Loading saved decisions' : 'Generating decision records'}
           errorLabel={lastAction === 'load' ? 'Retry loading' : 'Retry generation'}
-          icon={<BookOpenTextIcon size={14} weight="bold" />} disabled={isWorking || isLoading}
+          icon={<BookOpenTextIcon size={14} weight="bold" />}
+          disabled={isWorking || isLoading}
           onClick={(event) => void handleGenerate(event.currentTarget)} />
-      </div>
+      </ArtifactActions>
     </header>
     <p role="status" aria-atomic="true" className="sr-only">{primaryPending ? 'Decision request in progress.' : isDownloading ? 'Preparing Markdown download.' : downloaded ? 'Markdown download prepared.' : record ? `${record.adrs.length} decisions available.` : ''}</p>
     <MotionDisclosure isOpen={Boolean(error)}>

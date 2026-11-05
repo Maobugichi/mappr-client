@@ -4,7 +4,7 @@
 .eyebrow { margin-bottom: 5px; color: var(--color-text-muted); font: 10px/1.5 var(--font-mono); letter-spacing: 0.07em; text-transform: uppercase; }
 .title { color: var(--color-text); font: 600 20px/1.4 var(--font-display); }
 .version { margin-top: 8px; color: var(--color-text-muted); font: 12px/1.7 var(--font-body); }
-.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; max-width: 100%; }
+
 .workspace { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 28px; min-width: 0; }
 .directory { min-width: 0; align-self: start; }
 .directoryHeading { margin-bottom: 16px; color: var(--color-text); font: 600 16px/1.5 var(--font-display); }
@@ -28,9 +28,7 @@
 .inspector { display: none; min-width: 0; }
 .selectedContent { animation: operationReveal var(--motion-standard) var(--motion-ease-enter); }
 .operation { min-width: 0; }
-.operationPath { display: flex; align-items: baseline; gap: 12px; }
-.operationPath > code { min-width: 0; color: var(--color-text); font: 500 16px/1.6 var(--font-mono); overflow-wrap: anywhere; }
-.summary { margin-top: 14px; color: var(--color-text); font: 600 22px/1.5 var(--font-display); overflow-wrap: anywhere; }
+.summary { color: var(--color-text); font: 600 22px/1.5 var(--font-display); overflow-wrap: anywhere; }
 .description { margin-top: 12px; color: var(--color-text-muted); font: 14px/1.8 var(--font-body); white-space: pre-line; overflow-wrap: anywhere; }
 .operationMeta { display: flex; flex-wrap: wrap; gap: 16px 28px; margin-top: 20px; }
 .operationMeta > div { min-width: 0; max-width: 100%; }

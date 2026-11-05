@@ -1,7 +1,9 @@
 'use client';
 
-import { useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useId, useLayoutEffect, useMemo, useRef, type KeyboardEvent } from 'react';
+import { KeyIcon, LinkSimpleIcon } from '@phosphor-icons/react';
 import type { ColumnReference, DocumentCollection, DocumentField, RelationalColumn, RelationalTable } from '@/lib/api';
+import { usePreservedViewState } from '@/lib/artifact-workspace';
 import styles from './SchemaView.module.css';
 
 type SchemaItem = RelationalTable | DocumentCollection;
@@ -92,7 +94,8 @@ export function SchemaExplorer({ mode, items: sourceItems }: ExplorerProps) {
   const explorerId = useId();
   const navigatorRef = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<HTMLElement>(null);
-  const [view, setView] = useState<{ items: readonly SchemaItem[]; selected: SchemaItem | undefined; relationship: Relationship | null }>(() => ({
+  const followRelationship = useRef(false);
+  const [view, setView] = usePreservedViewState<{ items: readonly SchemaItem[]; selected: SchemaItem | undefined; relationship: Relationship | null }>('schema:workspace:' + mode, () => ({
     items, selected: items[0], relationship: null,
   }));
   const selected = items === view.items ? view.selected : retainSelection(items, view.selected);
@@ -130,12 +133,17 @@ export function SchemaExplorer({ mode, items: sourceItems }: ExplorerProps) {
   }, [items, selected]);
 
   useLayoutEffect(() => {
-    if (!view.relationship) return;
+    // Restoring a cached selection must not replay a previous navigation scroll.
+    if (!view.relationship || !followRelationship.current) return;
+    followRelationship.current = false;
     // Ordinary selection never scrolls. Following a real relationship focuses
     // its target, revealing it only if the target is outside the viewport.
     const frame = requestAnimationFrame(() => {
       const workspace = workspaceRef.current;
-      const target = workspace?.querySelector<HTMLElement>('[data-referenced="true"] th')
+      // Both responsive presentations use the same relationship state. Focus
+      // the visible field heading rather than its CSS-hidden counterpart.
+      const target = Array.from(workspace?.querySelectorAll<HTMLElement>('[data-referenced="true"] th, [data-referenced="true"] [data-mobile-field-heading]') ?? [])
+        .find((heading) => heading.getClientRects().length > 0)
         ?? workspace?.querySelector<HTMLElement>('h3');
       if (!target) return;
       target.focus({ preventScroll: true });
@@ -147,7 +155,10 @@ export function SchemaExplorer({ mode, items: sourceItems }: ExplorerProps) {
     return () => cancelAnimationFrame(frame);
   }, [view.relationship]);
 
-  const choose = (item: SchemaItem, relationship: Relationship | null = null) => setView({ items, selected: item, relationship });
+  const choose = (item: SchemaItem, relationship: Relationship | null = null) => {
+    followRelationship.current = Boolean(relationship);
+    setView({ items, selected: item, relationship });
+  };
   const navigate = (event: KeyboardEvent<HTMLElement>) => {
     if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
     const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[data-schema-item]'));
@@ -235,7 +246,7 @@ export function SchemaExplorer({ mode, items: sourceItems }: ExplorerProps) {
           {view.relationship.field && <span className={styles.supporting}>Referenced field highlighted below.</span>}
         </p>}
         {fieldsOf(selected).length === 0 ? <p className={styles.empty}>No fields were generated for this {singular}.</p> : (
-          <table role="table" className={styles.fieldTable} data-mode={mode}>
+          <><table role="table" className={styles.fieldTable} data-mode={mode}>
             <caption className="sr-only">Generated fields in {nameOf(selected)}</caption>
             <thead role="rowgroup"><tr role="row">
               <th role="columnheader" scope="col">{'columns' in selected ? 'Column' : 'Field'}</th>
@@ -292,6 +303,47 @@ export function SchemaExplorer({ mode, items: sourceItems }: ExplorerProps) {
               </tr>)}
             </tbody>
           </table>
+          <ul className={styles.mobileFields} aria-label={'Generated fields in ' + nameOf(selected)}>
+            {'columns' in selected ? selected.columns.map((column, index) => {
+              const unique = (column as RelationalColumn & { unique?: unknown }).unique;
+              const defaults = suppliedDefaults(column);
+              const headingId = explorerId + '-mobile-field-' + index;
+              return <li key={column.name + '-' + index} aria-labelledby={headingId} data-referenced={view.relationship?.field === column.name}>
+                <div className={styles.mobileFieldHeader}>
+                  <h4 id={headingId} data-mobile-field-heading tabIndex={-1} aria-describedby={view.relationship?.field === column.name ? relationshipId : undefined}>{column.name}</h4>
+                  <code className={styles.dataType}>{column.type}</code>
+                </div>
+                <div className={styles.mobileConstraints}>
+                  {column.primaryKey && <span className={styles.mobilePrimaryKey}><KeyIcon size={12} weight="bold" aria-hidden="true" />Primary key</span>}
+                  {column.references && <span className={styles.mobileForeignKey}><LinkSimpleIcon size={12} aria-hidden="true" />Foreign key</span>}
+                  {typeof unique === 'boolean' && <span>{unique ? 'UNIQUE' : 'Not unique'}</span>}
+                  <span>{typeof column.nullable === 'boolean' ? column.nullable ? 'Nullable' : 'NOT NULL' : 'Nullability not specified'}</span>
+                </div>
+                {column.references && foreignKey(selected, column, column.references)}
+                {defaults.length > 0 && <dl className={styles.defaultValues}>
+                  {defaults.map(([key, value]) => <div key={key}>
+                    <dt className={styles.supporting}>{defaults.length === 1 ? 'Default' : key}</dt>
+                    <dd><code>{formatValue(value)}</code></dd>
+                  </div>)}
+                </dl>}
+                <EnumValues values={column.enumValues} />
+                <Metadata source={column} omit={['name', 'type', 'primaryKey', 'nullable', 'enumValues', 'references', 'default', 'defaultValue', ...(typeof unique === 'boolean' ? ['unique'] : [])]} />
+              </li>;
+            }) : selected.fields.map((field, index) => {
+              const headingId = explorerId + '-mobile-field-' + index;
+              return <li key={field.name + '-' + index} aria-labelledby={headingId} data-referenced={view.relationship?.field === field.name}>
+                <div className={styles.mobileFieldHeader}>
+                  <h4 id={headingId} data-mobile-field-heading tabIndex={-1} aria-describedby={view.relationship?.field === field.name ? relationshipId : undefined}>{field.name === 'id' ? '_id' : field.name}</h4>
+                  <code className={styles.dataType}>{field.type}</code>
+                </div>
+                {typeof field.required === 'boolean' && <div className={styles.mobileConstraints}>{field.required ? 'Required' : 'Optional'}</div>}
+                {field.name === 'id' && <span className={styles.supporting}>Generated field: id</span>}
+                <EnumValues values={field.enumValues} />
+                {documentRelation(selected, field)}
+                <Metadata source={field} omit={['name', 'type', 'required', 'enumValues', 'relation']} />
+              </li>;
+            })}
+          </ul></>
         )}
         <section className={styles.relationships} aria-labelledby={explorerId + '-relationships-heading'}>
           <h4 id={explorerId + '-relationships-heading'}>Relationships</h4>

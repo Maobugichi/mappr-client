@@ -2,6 +2,7 @@
 
 import { useId, useState } from 'react';
 import type { MapprSystem } from '@/lib/api';
+import { ArtifactWorkspaceProvider } from '@/lib/artifact-workspace';
 import { ArchitectureCanvas } from './ArchitectureCanvas';
 import { DatabaseCanvas } from './DatabaseCanvas';
 import { TechStackView } from './TechStackView';
@@ -51,7 +52,7 @@ const VIEWS: { id: ViewId; label: string }[] = [
   { id: 'json', label: 'JSON' },
 ];
 
-export function MapWorkspace({ mapId, data: initialData }: { mapId: string; data: MapprSystem }) {
+function MapWorkspaceContent({ mapId, data: initialData }: { mapId: string; data: MapprSystem }) {
   const workspaceId = useId();
   // Arrow keys move focus; Enter/Space activates a view. Moving through the
   // tab list must not mount views or start their saved-artifact requests.
@@ -112,22 +113,28 @@ export function MapWorkspace({ mapId, data: initialData }: { mapId: string; data
   );
 
   return (
-    <div className="flex flex-col gap-4">
-      <WorkspaceTabs views={VIEWS} activeView={activeView} workspaceId={workspaceId} onActivate={setActiveView} />
+    <ArtifactWorkspaceProvider mapId={mapId} source={data}>
+      <div className="flex flex-col gap-4">
+        <WorkspaceTabs views={VIEWS} activeView={activeView} workspaceId={workspaceId} onActivate={setActiveView} />
 
-      {VIEWS.map((view) => (
-        <div
-          key={view.id}
-          id={`${workspaceId}-panel-${view.id}`}
-          role="tabpanel"
-          aria-labelledby={`${workspaceId}-tab-${view.id}`}
-          hidden={activeView !== view.id}
-          tabIndex={activeView === view.id ? 0 : -1}
-          className="min-w-0"
-        >
-          {activeView === view.id ? activeContent : null}
-        </div>
-      ))}
-    </div>
+        {VIEWS.map((view) => (
+          <div
+            key={view.id}
+            id={`${workspaceId}-panel-${view.id}`}
+            role="tabpanel"
+            aria-labelledby={`${workspaceId}-tab-${view.id}`}
+            hidden={activeView !== view.id}
+            tabIndex={activeView === view.id ? 0 : -1}
+            className="min-w-0"
+          >
+            {activeView === view.id ? activeContent : null}
+          </div>
+        ))}
+      </div>
+    </ArtifactWorkspaceProvider>
   );
+}
+
+export function MapWorkspace(props: { mapId: string; data: MapprSystem }) {
+  return <MapWorkspaceContent key={props.mapId} {...props} />;
 }
