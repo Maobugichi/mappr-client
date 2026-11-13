@@ -8,6 +8,8 @@ import { useSchemaArtifact } from '@/lib/use-schema-artifact';
 import { usePreservedViewState } from '@/lib/artifact-workspace';
 import { ArtifactActionButton, ArtifactActions } from './ArtifactActions';
 import { MotionDisclosure } from './MotionDisclosure';
+import { ArtifactSafety } from './ArtifactSafety';
+import { exportExpectation } from '@/lib/artifact-safety';
 import { SchemaExplorer } from './SchemaExplorer';
 import { SchemaEngineSelect } from './SchemaEngineSelect';
 import styles from './SchemaView.module.css';
@@ -28,9 +30,9 @@ export function RelationalSchemaView({ mapId, productName, modeControls, onAvail
 }) {
   const {
     schema, isLoading, isRunning, isDownloading, isReloading, isWorking, error,
-    resultRevision, downloaded, runGeneration, runDownload, runReload,
+    resultRevision, downloaded, safety, runGeneration, runDownload, runReload,
   } = useSchemaArtifact({
-    mapId, load: getRelationalSchema, generate: runRelationalSchema,
+    mapId, kind: 'relational_schema', load: getRelationalSchema, generate: runRelationalSchema,
     label: 'relational schema', exportError: 'Something went wrong rendering the SQL.',
   });
   const [dialect, setDialect] = usePreservedViewState<RelationalDialect>('schema:dialect', 'postgres');
@@ -46,11 +48,11 @@ export function RelationalSchemaView({ mapId, productName, modeControls, onAvail
   const handleDownload = (trigger: HTMLButtonElement) => {
     if (!schema) return;
     setLastAction('download');
-    return runDownload(trigger, async () => {
+    return runDownload(trigger, async (fresh) => {
       // SQL is rendered by the existing backend endpoint for the chosen engine.
-      const sql = await getRelationalSchemaSql(mapId, dialect);
+      const sql = await getRelationalSchemaSql(mapId, dialect, exportExpectation(fresh));
       return {
-        filename: `${slugify(productName) || 'mappr-export'}-${dialect}-v${schema.version}.sql`,
+        filename: `${slugify(productName) || 'mappr-export'}-${dialect}-v${fresh.version}.sql`,
         content: sql, mimeType: 'application/sql',
       };
     });
@@ -58,7 +60,7 @@ export function RelationalSchemaView({ mapId, productName, modeControls, onAvail
   const pending = isLoading || isRunning || isReloading;
 
   return (
-    <section className={styles.schemaView} aria-label="Relational Schema Explorer">
+    <ArtifactSafety safety={safety}><section className={styles.schemaView} aria-label="Relational Schema Explorer">
       <header className={styles.header}>
         <div className={styles.headingCopy}>
           <p className={styles.eyebrow}>Relational schema</p>
@@ -96,6 +98,6 @@ export function RelationalSchemaView({ mapId, productName, modeControls, onAvail
         {isRunning ? `Generating a relational schema. ${schema ? `Displayed v${schema.version} remains available.` : ''}`
           : downloaded ? 'SQL download prepared.' : ''}
       </p>
-    </section>
+    </section></ArtifactSafety>
   );
 }

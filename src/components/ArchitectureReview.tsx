@@ -5,6 +5,7 @@ import { useId, useRef } from 'react';
 import type { ArchitectureFinding, FindingSeverity } from '@/lib/api';
 import { MotionDisclosure } from './MotionDisclosure';
 import styles from './ArchitectureReview.module.css';
+import { SavedArtifactFields } from './ArtifactSafety';
 
 const SEVERITY_LABEL: Record<FindingSeverity, string> = {
   low: 'Low',
@@ -46,6 +47,7 @@ type ArchitectureReviewProps = {
   hasReview?: boolean;
   revision?: number;
   error?: string | null;
+  inspection?: unknown;
 };
 
 export function ArchitectureReview({
@@ -57,7 +59,7 @@ export function ArchitectureReview({
   isRunning,
   hasReview = true,
   revision = 0,
-  error,
+  error, inspection,
 }: ArchitectureReviewProps) {
   const findingIdPrefix = useId();
   const closeTriggerRef = useRef<HTMLButtonElement>(null);
@@ -81,7 +83,7 @@ export function ArchitectureReview({
             Architecture Review
           </p>
           {(hasReview || !isRunning) && <h3 aria-live={isRunning ? 'off' : 'polite'} aria-atomic="true" className="font-display text-lg font-semibold text-text">
-            {hasReview ? `${active.length} issue${active.length === 1 ? '' : 's'} detected` : 'Review unavailable'}
+            {inspection ? 'Saved review (inspection only)' : hasReview ? `${active.length} issue${active.length === 1 ? '' : 's'} detected` : 'Review unavailable'}
           </h3>}
         </div>
         <button
@@ -94,8 +96,9 @@ export function ArchitectureReview({
         </button>
       </div>
 
+      {inspection != null && <SavedArtifactFields value={inspection} />}
       <MotionDisclosure isOpen={Boolean(error)}>
-        <p role="alert" className="mb-4 rounded-lg border border-danger bg-surface-raised p-3 font-body text-xs text-danger">{error} Use Retry review to try again.</p>
+        <p role="alert" className="mb-4 rounded-lg border border-danger bg-surface-raised p-3 font-body text-xs text-danger">{error} Refresh tracked output before deliberately requesting another review.</p>
       </MotionDisclosure>
 
       {hasReview && !isRunning && sorted.length === 0 && (

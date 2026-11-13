@@ -7,6 +7,8 @@ import { useSchemaArtifact } from '@/lib/use-schema-artifact';
 import { usePreservedViewState } from '@/lib/artifact-workspace';
 import { ArtifactActionButton, ArtifactActions } from './ArtifactActions';
 import { MotionDisclosure } from './MotionDisclosure';
+import { ArtifactSafety } from './ArtifactSafety';
+import { exportExpectation } from '@/lib/artifact-safety';
 import { SchemaExplorer } from './SchemaExplorer';
 import { SchemaEngineBadge } from './SchemaEngineSelect';
 import styles from './SchemaView.module.css';
@@ -21,9 +23,9 @@ export function DocumentSchemaView({ mapId, productName, modeControls, onAvailab
 }) {
   const {
     schema, isLoading, isRunning, isDownloading, isReloading, isWorking, error,
-    resultRevision, downloaded, runGeneration, runDownload, runReload,
+    resultRevision, downloaded, safety, runGeneration, runDownload, runReload,
   } = useSchemaArtifact({
-    mapId, load: getDocumentSchema, generate: runDocumentSchema,
+    mapId, kind: 'document_schema', load: getDocumentSchema, generate: runDocumentSchema,
     label: 'document schema', exportError: 'Something went wrong rendering the script.',
   });
   const [lastAction, setLastAction] = usePreservedViewState<'load' | 'generate' | 'download'>('DocumentSchemaView:last-action', 'load');
@@ -37,10 +39,10 @@ export function DocumentSchemaView({ mapId, productName, modeControls, onAvailab
   const handleDownload = (trigger: HTMLButtonElement) => {
     if (!schema) return;
     setLastAction('download');
-    return runDownload(trigger, async () => {
-      const script = await getDocumentSchemaScript(mapId);
+    return runDownload(trigger, async (fresh) => {
+      const script = await getDocumentSchemaScript(mapId, exportExpectation(fresh));
       return {
-        filename: `${slugify(productName) || 'mappr-export'}-mongo-v${schema.version}.js`,
+        filename: `${slugify(productName) || 'mappr-export'}-mongo-v${fresh.version}.js`,
         content: script, mimeType: 'application/javascript',
       };
     });
@@ -48,7 +50,7 @@ export function DocumentSchemaView({ mapId, productName, modeControls, onAvailab
   const pending = isLoading || isRunning || isReloading;
 
   return (
-    <section className={styles.schemaView} aria-label="Document Schema Explorer">
+    <ArtifactSafety safety={safety}><section className={styles.schemaView} aria-label="Document Schema Explorer">
       <header className={styles.header}>
         <div className={styles.headingCopy}>
           <p className={styles.eyebrow}>Document schema</p>
@@ -84,6 +86,6 @@ export function DocumentSchemaView({ mapId, productName, modeControls, onAvailab
         {isRunning ? `Generating a document schema. ${schema ? `Displayed v${schema.version} remains available.` : ''}`
           : downloaded ? 'JavaScript download prepared.' : ''}
       </p>
-    </section>
+    </section></ArtifactSafety>
   );
 }

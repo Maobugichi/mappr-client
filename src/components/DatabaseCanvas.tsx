@@ -7,12 +7,21 @@ import {
   Background,
   BackgroundVariant,
   Controls,
+  ControlButton,
+  useReactFlow,
+  useStore,
+  useStoreApi,
   type Node,
   type Edge,
+  type FitViewOptions,
+  type Viewport,
 } from '@xyflow/react';
+import { CornersOutIcon, LockIcon, LockOpenIcon, MinusIcon, PlusIcon } from '@phosphor-icons/react';
 import '@xyflow/react/dist/style.css';
 import controlStyles from './CanvasControls.module.css';
+import styles from './DatabaseCanvas.module.css';
 import { getLayoutedElements } from '@/lib/layout';
+import { usePreservedViewState } from '@/lib/artifact-workspace';
 import { EntityNode, type EntityNodeData } from './nodes/EntityNode';
 import { NodeInspector } from './NodeInspector';
 import type { MapprSystem } from '@/lib/api';
@@ -27,11 +36,36 @@ const ENTITY_HEADER_HEIGHT = 44;
 const ENTITY_FIELD_HEIGHT = 18;
 const ENTITY_PADDING = 20;
 
+// Native fitView waits for measured nodes. A zero lower bound lets it choose
+// the positive scale required by the entire graph, instead of clipping at 0.5.
+const FIT_OPTIONS: FitViewOptions = {
+  minZoom: 0, maxZoom: 2, duration: 0,
+  padding: { top: '24px', left: '24px', right: '64px', bottom: '24px' },
+};
+type SavedViewport = { graph: string; viewport: Viewport };
+
 type DatabaseCanvasProps = {
   dataModel: MapprSystem['dataModel'];
 };
 
 function DatabaseCanvasInner({ dataModel }: DatabaseCanvasProps) {
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const { zoomIn, zoomOut, fitView } = useReactFlow();
+  const store = useStoreApi();
+  const minZoomReached = useStore((state) => state.transform[2] <= state.minZoom);
+  const maxZoomReached = useStore((state) => state.transform[2] >= state.maxZoom);
+  const interactive = useStore((state) => state.nodesDraggable || state.nodesConnectable || state.elementsSelectable);
+  // Array identities, selection and viewport movement are not layout inputs.
+  const layoutInput = JSON.stringify({ entities: dataModel.entities, relations: dataModel.relations });
+  const [savedViewport, setSavedViewport] = usePreservedViewState<SavedViewport | null>('database:viewport', null);
+  const initialViewport = savedViewport?.graph === layoutInput ? savedViewport.viewport : undefined;
+  const rememberViewport = useCallback((viewport: Viewport) => {
+    setSavedViewport({ graph: layoutInput, viewport });
+  }, [layoutInput, setSavedViewport]);
+  const controlDuration = () => {
+    if (!canvasRef.current || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return 0;
+    return parseFloat(getComputedStyle(canvasRef.current).getPropertyValue('--motion-fast')) || 0;
+  };
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   // Keep the last entity's contents through the exit transition. Selection
   // alone controls graph focus and whether the inspector is interactive.
@@ -52,15 +86,17 @@ function DatabaseCanvasInner({ dataModel }: DatabaseCanvasProps) {
   }, []);
 
   const { nodes: layoutedNodes, edges: layoutedEdges } = useMemo(() => {
-    const rawNodes: Node[] = dataModel.entities.map((entity) => ({
+    const model = JSON.parse(layoutInput) as MapprSystem['dataModel'];
+    const rawNodes: Node[] = model.entities.map((entity) => ({
       id: entity.id,
       type: 'entity',
+      draggable: false,
       ariaLabel: `Entity ${entity.name}`,
       data: { name: entity.name, fields: entity.fields },
       position: { x: 0, y: 0 }, // overwritten by dagre
     }));
 
-    const rawEdges: Edge[] = dataModel.relations.map((relation, index) => ({
+    const rawEdges: Edge[] = model.relations.map((relation, index) => ({
       id: `${relation.from}-${relation.to}-${index}`,
       source: relation.from,
       target: relation.to,
@@ -78,7 +114,7 @@ function DatabaseCanvasInner({ dataModel }: DatabaseCanvasProps) {
     };
 
     return getLayoutedElements(rawNodes, rawEdges, 'TB', getNodeSize);
-  }, [dataModel.entities, dataModel.relations]);
+  }, [layoutInput]);
 
   const selectedEntity = useMemo(
     () => dataModel.entities.find((entity) => entity.id === selectedEntityId) ?? null,
@@ -171,6 +207,7 @@ function DatabaseCanvasInner({ dataModel }: DatabaseCanvasProps) {
 
   return (
     <div
+      ref={canvasRef}
       className="h-full"
       onKeyDownCapture={(event) => {
         // Keep React Flow's deferred Escape blur from undoing the focus
@@ -199,17 +236,57 @@ function DatabaseCanvasInner({ dataModel }: DatabaseCanvasProps) {
         }
       }}
     >
+      {/* Only actual graph changes remount the flow for fresh measurement.
+          Cached viewports disable its native, measurement-aware initial fit. */}
       <ReactFlow
+        key={layoutInput}
+        className={styles.flow}
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
-        fitView
+        fitView={!initialViewport}
+        fitViewOptions={FIT_OPTIONS}
+        minZoom={0}
+        defaultViewport={initialViewport}
+        nodesDraggable={false}
+        panOnDrag
+        zoomOnPinch
+        preventScrolling
+        selectionOnDrag={false}
+        onMoveStart={(event, viewport) => {
+          // User input takes priority over a fit still waiting for measurement.
+          if (event && !initialViewport) rememberViewport(viewport);
+        }}
+        onMoveEnd={(_, viewport) => rememberViewport(viewport)}
         autoPanOnNodeFocus={false}
         onNodeClick={(event, node) => handleSelectEntity(node.id, event.currentTarget as HTMLElement)}
         onPaneClick={() => setSelectedEntityId(null)}
       >
         <Background variant={BackgroundVariant.Dots} color="var(--color-canvas-grid)" gap={24} />
-        <Controls className={controlStyles.controls} position="bottom-right" />
+        <Controls className={`${controlStyles.controls} ${styles.controls}`} position="bottom-right"
+          showZoom={false} showFitView={false} showInteractive={false}>
+          <ControlButton className="react-flow__controls-zoomin" title="Zoom in" aria-label="Zoom in"
+            disabled={maxZoomReached} onClick={() => void zoomIn({ duration: controlDuration() })}>
+            <PlusIcon size={12} aria-hidden="true" />
+          </ControlButton>
+          <ControlButton className="react-flow__controls-zoomout" title="Zoom out" aria-label="Zoom out"
+            disabled={minZoomReached} onClick={() => void zoomOut({ duration: controlDuration() })}>
+            <MinusIcon size={12} aria-hidden="true" />
+          </ControlButton>
+          <ControlButton className="react-flow__controls-fitview" title="Fit view" aria-label="Fit view"
+            onClick={() => void fitView({ ...FIT_OPTIONS, duration: controlDuration() })}>
+            <CornersOutIcon size={12} aria-hidden="true" />
+          </ControlButton>
+          <ControlButton className="react-flow__controls-interactive" aria-pressed={!interactive}
+            title={interactive ? 'Lock interactions' : 'Unlock interactions'}
+            aria-label={interactive ? 'Lock interactions' : 'Unlock interactions'} onClick={() => {
+              const state = store.getState();
+              const enabled = state.nodesDraggable || state.nodesConnectable || state.elementsSelectable;
+              store.setState({ nodesDraggable: false, nodesConnectable: !enabled, elementsSelectable: !enabled });
+            }}>
+            {interactive ? <LockOpenIcon size={12} aria-hidden="true" /> : <LockIcon size={12} aria-hidden="true" />}
+          </ControlButton>
+        </Controls>
       </ReactFlow>
 
       <NodeInspector
@@ -225,7 +302,7 @@ function DatabaseCanvasInner({ dataModel }: DatabaseCanvasProps) {
 
 export function DatabaseCanvas(props: DatabaseCanvasProps) {
   return (
-    <div className="relative h-[600px] w-full overflow-hidden rounded-lg border border-canvas-grid bg-canvas">
+    <div className={`relative h-[600px] w-full overflow-hidden rounded-lg border border-canvas-grid bg-canvas ${styles.canvas}`}>
       <ReactFlowProvider>
         <DatabaseCanvasInner {...props} />
       </ReactFlowProvider>

@@ -9,6 +9,7 @@ import { useGeneratedArtifact } from '@/lib/use-generated-artifact';
 import { usePreservedViewState } from '@/lib/artifact-workspace';
 import { ArtifactActionButton, ArtifactActions } from './ArtifactActions';
 import { MotionDisclosure } from './MotionDisclosure';
+import { ArtifactSafety } from './ArtifactSafety';
 import styles from './ApiContractView.module.css';
 
 type Field = { name: string; type?: string; required?: boolean; description?: string };
@@ -280,10 +281,10 @@ function ApiContractContent({ mapId, productName }: { mapId: string; productName
   const generateTriggerRef = useRef<HTMLButtonElement>(null);
   const [lastAction, setLastAction] = usePreservedViewState<'load' | 'generate' | 'download'>('ApiContractView:last-action', 'load');
   const {
-    record: contract, isLoading, isRunning, isReloading, isWorking, error,
-    resultRevision, downloaded, runGeneration, runDownload, runReload,
+    record: contract, isLoading, isRunning, isDownloading, isReloading, isWorking, error,
+    resultRevision, downloaded, safety, runGeneration, runDownload, runReload,
   } = useGeneratedArtifact({
-    mapId, load: getApiContract, generate: runApiContract,
+    mapId, kind: 'api_contract', load: getApiContract, generate: runApiContract,
     loadError: 'Could not load the saved API contract. Use Retry loading to check again.',
     generationError: 'Could not generate the API contract. Your displayed contract is unchanged.',
     exportError: 'Could not prepare the OpenAPI export. Use Retry export to try again.',
@@ -298,16 +299,16 @@ function ApiContractContent({ mapId, productName }: { mapId: string; productName
     setLastAction('download');
     // Serialization and browser download preparation are local synchronous work.
     // Keep the shared operation lock and error handling, without a fake loader.
-    return runDownload(trigger, async () => ({
-      filename: (slugify(productName) || 'mappr-export') + '-openapi-v' + contract.version + '.json',
-      content: JSON.stringify(buildOpenApiDocument(contract, productName), null, 2),
+    return runDownload(trigger, async (fresh) => ({
+      filename: (slugify(productName) || 'mappr-export') + '-openapi-v' + fresh.version + '.json',
+      content: JSON.stringify(buildOpenApiDocument(fresh, productName), null, 2),
       mimeType: 'application/json',
     }));
   };
   const pending = isLoading || isRunning || isReloading;
 
   return (
-    <section className={styles.apiContract} aria-label="API Explorer">
+    <ArtifactSafety safety={safety}><section className={styles.apiContract} aria-label="API Explorer">
       <header className={styles.header}>
         <div className={styles.headingCopy}>
           <p className={styles.eyebrow}>API contract</p>
@@ -320,7 +321,7 @@ function ApiContractContent({ mapId, productName }: { mapId: string; productName
         <ArtifactActions>
           {contract && <ArtifactActionButton action="export" title="Export OpenAPI JSON" data-contract-export variant="secondary"
             onClick={(event) => void handleDownload(event.currentTarget)}
-            state={error && lastAction === 'download' ? 'error' : downloaded ? 'success' : 'idle'}
+            state={isDownloading ? 'pending' : error && lastAction === 'download' ? 'error' : downloaded ? 'success' : 'idle'}
             disabled={isWorking || isLoading} idleLabel="OpenAPI JSON" pendingLabel="Preparing OpenAPI JSON"
             successLabel="Download again" errorLabel="Retry export"  />}
           <ArtifactActionButton action="generate" title={contract ? 'Regenerate API contract' : 'Generate API contract'} regenerate={Boolean(contract)} ref={generateTriggerRef} data-contract-action
@@ -343,7 +344,7 @@ function ApiContractContent({ mapId, productName }: { mapId: string; productName
         {isRunning ? 'Generating the API contract. ' + (contract ? 'The displayed v' + contract.version + ' remains available.' : '')
           : downloaded ? 'OpenAPI JSON download prepared.' : ''}
       </p>
-    </section>
+    </section></ArtifactSafety>
   );
 }
 

@@ -117,7 +117,7 @@ function DatabaseList({ dataModel }: { dataModel: MapprSystem['dataModel'] }) {
   );
 }
 
-export function AllView({ mapId, data, onSystemUpdated }: { mapId: string; data: MapprSystem, onSystemUpdated: (system: MapprSystem) => void; }) {
+export function AllView({ mapId, data, onSystemUpdated }: { mapId: string; data: MapprSystem, onSystemUpdated: (system: MapprSystem, revision: number, responseMapId: string) => void; }) {
   return (
     <div className="flex flex-col gap-10">
       <Section title="Overview">

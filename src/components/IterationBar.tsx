@@ -5,7 +5,8 @@ import { ArrowUpIcon, ClockCounterClockwiseIcon } from '@phosphor-icons/react';
 import { getVersions, type VersionSummary } from '@/lib/api';
 
 type IterationBarProps = {
-  onSubmit: (instruction: string) => Promise<void>;
+  onSubmit?: (instruction: string) => Promise<void>;
+  historyOnly?: boolean;
   isRunning: boolean;
   error: string | null;
   lastSummary: string | null;
@@ -26,6 +27,7 @@ export function IterationBar({
   refreshKey,
   onCompare,
   isDiffing,
+  historyOnly = false,
 }: IterationBarProps) {
   const [instruction, setInstruction] = useState('');
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
@@ -51,7 +53,7 @@ export function IterationBar({
 
   const handleSubmit = async () => {
     const trimmed = instruction.trim();
-    if (!trimmed || isRunning) return;
+    if (!trimmed || isRunning || !onSubmit || historyOnly) return;
     await onSubmit(trimmed);
     setInstruction('');
   };
@@ -70,7 +72,7 @@ export function IterationBar({
   const canCompare = selectedVersions.length === 2 && !isDiffing;
 
   return (
-    <div className="flex w-[480px] max-w-[90vw] flex-col gap-2">
+    <div className={`flex ${historyOnly && !isHistoryOpen ? 'w-fit' : 'w-[480px]'} max-w-[90vw] flex-col gap-2`}>
       {isHistoryOpen && (
         <div className="max-h-56 overflow-y-auto rounded-lg border border-canvas-grid bg-surface p-3 shadow-lg">
           <div className="mb-2 flex items-center justify-between">
@@ -142,7 +144,7 @@ export function IterationBar({
           <ClockCounterClockwiseIcon size={16} />
         </button>
 
-        <input
+        {historyOnly ? <span className="font-mono text-xs text-text-muted">Version history</span> : <><input
           value={instruction}
           onChange={(e) => setInstruction(e.target.value)}
           onKeyDown={(e) => {
@@ -160,7 +162,7 @@ export function IterationBar({
           className="shrink-0 rounded-full bg-signal p-1.5 text-canvas transition-opacity hover:opacity-90 disabled:opacity-40"
         >
           <ArrowUpIcon size={16} weight="bold" />
-        </button>
+        </button></>}
       </div>
     </div>
   );

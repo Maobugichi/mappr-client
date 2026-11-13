@@ -1,3 +1,5 @@
+import { ARTIFACT_ROUTES, assertArtifactPayload, assertTrackedArtifact, ArtifactMutationError, ArtifactSafetyError, type ArtifactKind, type ArtifactExportExpectation } from './artifact-safety';
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
 if (!API_URL) {
@@ -44,6 +46,8 @@ export type MapprSystem = {
 
 export type MapRecord = {
   id: string;
+  // Older saved maps can still be read without an established S3 revision.
+  revision?: number;
   createdAt: string;
   updatedAt: string;
   data: MapprSystem;
@@ -439,16 +443,20 @@ type ApiErrorBody = {
   error: string;
   message?: string;
   details?: unknown;
+  requestId?: string;
+  retry?: 'same_request' | 'new_preview' | 'refresh_map' | 'none';
 };
 
 export class ApiError extends Error {
   status: number;
   body: ApiErrorBody;
+  retryAfterMs: number;
 
-  constructor(status: number, body: ApiErrorBody) {
+  constructor(status: number, body: ApiErrorBody, retryAfterMs = 0) {
     super(body.message ?? body.error);
     this.status = status;
     this.body = body;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -477,10 +485,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 // plain text on success rather than JSON — used only by
 // getRelationalSchemaSql, since calling response.json() on real SQL
 // text would throw.
-async function requestText(path: string, init?: RequestInit): Promise<string> {
+async function requestText(path: string, init?: RequestInit, expected?: ArtifactExportExpectation): Promise<string> {
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     credentials: 'include',
+    cache: 'no-store',
     headers: {
       'Content-Type': 'application/json',
       ...init?.headers,
@@ -494,7 +503,55 @@ async function requestText(path: string, init?: RequestInit): Promise<string> {
     throw new ApiError(response.status, body);
   }
 
-  return response.text();
+  const type = response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase();
+  const route = path.split('?')[0];
+  const allowed = route.endsWith('/sql') ? ['application/sql', 'text/x-sql', 'text/plain']
+    : route.endsWith('/script') ? ['application/javascript', 'text/javascript', 'text/plain']
+    : route.endsWith('/markdown') ? ['text/markdown', 'text/plain'] : ['text/plain'];
+  if (!type || !allowed.includes(type)) throw new ArtifactSafetyError('The export returned an unexpected content type. No file was downloaded.');
+  const revision = response.headers.get('X-Mappr-Current-Revision');
+  if (revision !== null && (!/^\d+$/.test(revision) || Number(revision) < 1)) throw new ArtifactSafetyError('Invalid export snapshot metadata.');
+  const generation = response.headers.get('X-Mappr-Artifact-Generation');
+  const render = response.headers.get('X-Mappr-Render-Fingerprint');
+  if (generation !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(generation)) throw new ArtifactSafetyError('Invalid export generation metadata.');
+  if (expected && revision !== null && Number(revision) !== expected.currentRevision
+    || expected?.generationId && generation !== null && generation !== expected.generationId
+    || render !== null && !render.trim()) throw new ArtifactSafetyError('The export snapshot changed. Refresh before downloading.');
+  const content = await response.text();
+  if (/^\s*(?:<!doctype\s+html|<html[\s>])/i.test(content)) throw new ArtifactSafetyError('The export returned an HTML document. No file was downloaded.');
+  try {
+    const json = JSON.parse(content);
+    if (json && typeof json === 'object' && ('error' in json || 'message' in json)) throw new ArtifactSafetyError('The export returned an error document. No file was downloaded.');
+  } catch (error) { if (error instanceof ArtifactSafetyError) throw error; }
+  return content;
+}
+
+async function trackedArtifact<T>(mapId: string, kind: ArtifactKind, inspection = false): Promise<T | null> {
+  try {
+    // Always construct the known route. Never follow an untrusted inspectionUrl.
+    const record = await request<T>(`/maps/${mapId}/${ARTIFACT_ROUTES[kind]}?freshness=tracked${inspection ? '&includeStale=true' : ''}`, { cache: 'no-store' });
+    assertTrackedArtifact(record, mapId, inspection ? 'inspection' : 'current');
+    assertArtifactPayload(record, kind);
+    return record;
+  } catch (error) {
+    if (!inspection && error instanceof ApiError && error.status === 404) return null;
+    throw error;
+  }
+}
+
+async function mutateArtifact<T>(mapId: string, kind: ArtifactKind, suffix = '', init: RequestInit = { method: 'POST' }): Promise<T> {
+  let mutationError: unknown;
+  try { await request(`/maps/${mapId}/${ARTIFACT_ROUTES[kind]}${suffix}`, { ...init, cache: 'no-store' }); }
+  catch (error) { mutationError = error; }
+  let current: T | null;
+  try { current = await trackedArtifact<T>(mapId, kind); }
+  catch (error) {
+    if (mutationError) throw new ArtifactMutationError(mutationError, null, error);
+    throw error;
+  }
+  if (mutationError) throw new ArtifactMutationError(mutationError, current);
+  if (!current) throw new ArtifactSafetyError('The request completed, but no tracked current artifact is available. Refresh before retrying generation.');
+  return current;
 }
 
 export function generateMap(description: string): Promise<MapRecord> {
@@ -508,19 +565,81 @@ export function getMap(id: string): Promise<MapRecord> {
   return request<MapRecord>(`/maps/${id}`);
 }
 
-export async function getArchitectureReview(mapId: string): Promise<ArchitectureReview | null> {
-  try {
-    return await request<ArchitectureReview>(`/maps/${mapId}/critique`);
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 404) {
-      return null;
-    }
-    throw err;
+export type ChangeHttpResult<T> = { data: T; serverTime: number | null };
+
+// Browser-only pilot requests: no session fabrication, Origin override, or
+// fallback to iteration. The backend release interlock remains authoritative.
+async function changeRequest<T>(path: string, init?: RequestInit, expectedStatus?: number): Promise<ChangeHttpResult<T>> {
+  const response = await fetch(`${API_URL}${path}`, {
+    ...init, credentials: 'include', cache: 'no-store',
+    headers: { 'Content-Type': 'application/json', ...init?.headers },
+  });
+  const date = Date.parse(response.headers.get('Date') ?? '');
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ error: 'unknown_error' })) as ApiErrorBody;
+    const retry = response.headers.get('Retry-After');
+    const delay = retry && /^\d+$/.test(retry) ? Number(retry) * 1000
+      : Math.max(0, Date.parse(retry ?? '') - (Number.isFinite(date) ? date : Date.now()));
+    throw new ApiError(response.status, body, Number.isFinite(delay) ? delay : 0);
   }
+  if (expectedStatus !== undefined && response.status !== expectedStatus) throw new Error(`Unexpected change response status: ${response.status}.`);
+  return { data: await response.json() as T, serverTime: Number.isFinite(date) ? date : null };
+}
+
+export function getEditEligibility(mapId: string) {
+  return changeRequest<{ mapId: string; canEdit: true }>(`/maps/${mapId}/edit-eligibility`);
+}
+export async function inspectSavedArtifact<T>(mapId: string, load: (mapId: string, inspection?: boolean) => Promise<T | null>) {
+  const owner = await getEditEligibility(mapId);
+  if (owner.data?.mapId !== mapId || owner.data.canEdit !== true) throw new ArtifactSafetyError('Only the established owner session can inspect saved output.');
+  return load(mapId, true);
+}
+
+export function getChangeMap(mapId: string) {
+  return changeRequest<MapRecord>(`/maps/${mapId}`);
+}
+
+export function previewOverviewChange(mapId: string, body: import('./overview-change-contract').OverviewChangeRequest, key: string) {
+  return changeRequest<import('./overview-change-contract').OverviewProposal>(`/maps/${mapId}/changes/preview`, {
+    method: 'POST', headers: { 'Idempotency-Key': key }, body: JSON.stringify(body),
+  });
+}
+
+export function applyOverviewChange(mapId: string, proposalId: string, baseRevision: number) {
+  return changeRequest<import('./overview-change-contract').OverviewApplyReceipt>(`/maps/${mapId}/changes/${proposalId}/apply`, {
+    method: 'POST', body: JSON.stringify({ approved: true, expectedBaseRevision: baseRevision }),
+  });
+}
+export function previewArchitectureChange(mapId: string, body: import('./architecture-change-contract').ArchitectureChangeRequest, key: string) {
+  return changeRequest<import('./architecture-change-contract').ArchitectureProposal>(`/maps/${mapId}/changes/preview`, {
+    method: 'POST', headers: { 'Idempotency-Key': key }, body: JSON.stringify(body),
+  });
+}
+export function applyChangeProposal(mapId: string, proposalId: string, baseRevision: number) {
+  return changeRequest<import('./change-protocol').ChangeReceipt>(`/maps/${mapId}/changes/${proposalId}/apply`, {
+    method: 'POST', body: JSON.stringify({ approved: true, expectedBaseRevision: baseRevision }),
+  });
+}
+export function rejectChangeProposal(mapId: string, proposalId: string, baseRevision: number) {
+  return changeRequest<import('./change-protocol').ChangeRejection>(`/maps/${mapId}/changes/${proposalId}/reject`, {
+    method: 'POST', body: JSON.stringify({ rejected: true, expectedBaseRevision: baseRevision }),
+  }, 200);
+}
+export const applyArchitectureChange = applyChangeProposal;
+export const rejectArchitectureChange = rejectChangeProposal;
+
+export function previewTechStackChange(mapId: string, body: import('./tech-stack-change-contract').TechStackChangeRequest, key: string) {
+  return changeRequest<import('./tech-stack-change-contract').TechStackProposal>(`/maps/${mapId}/changes/preview`, {
+    method: 'POST', headers: { 'Idempotency-Key': key }, body: JSON.stringify(body),
+  });
+}
+
+export async function getArchitectureReview(mapId: string, inspection = false): Promise<ArchitectureReview | null> {
+  return trackedArtifact<ArchitectureReview>(mapId, 'critique', inspection);
 }
 
 export function runArchitectureReview(mapId: string): Promise<ArchitectureReview> {
-  return request<ArchitectureReview>(`/maps/${mapId}/critique`, { method: 'POST' });
+  return mutateArtifact<ArchitectureReview>(mapId, 'critique');
 }
 
 export function setFindingDismissed(
@@ -528,26 +647,19 @@ export function setFindingDismissed(
   findingId: string,
   dismissed: boolean
 ): Promise<ArchitectureReview> {
-  return request<ArchitectureReview>(`/maps/${mapId}/critique/findings/${findingId}`, {
+  return mutateArtifact<ArchitectureReview>(mapId, 'critique', `/findings/${findingId}`, {
     method: 'PATCH',
     body: JSON.stringify({ dismissed }),
   });
 }
 
 // Same null-on-404 convention as getArchitectureReview above.
-export async function getRequirementsReview(mapId: string): Promise<RequirementsReview | null> {
-  try {
-    return await request<RequirementsReview>(`/maps/${mapId}/requirements`);
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 404) {
-      return null;
-    }
-    throw err;
-  }
+export async function getRequirementsReview(mapId: string, inspection = false): Promise<RequirementsReview | null> {
+  return trackedArtifact<RequirementsReview>(mapId, 'requirements', inspection);
 }
 
 export function runRequirementsReview(mapId: string): Promise<RequirementsReview> {
-  return request<RequirementsReview>(`/maps/${mapId}/requirements`, { method: 'POST' });
+  return mutateArtifact<RequirementsReview>(mapId, 'requirements');
 }
 
 export function setRequirementDismissed(
@@ -555,7 +667,7 @@ export function setRequirementDismissed(
   findingId: string,
   dismissed: boolean
 ): Promise<RequirementsReview> {
-  return request<RequirementsReview>(`/maps/${mapId}/requirements/findings/${findingId}`, {
+  return mutateArtifact<RequirementsReview>(mapId, 'requirements', `/findings/${findingId}`, {
     method: 'PATCH',
     body: JSON.stringify({ dismissed }),
   });
@@ -576,83 +688,56 @@ export function getDiff(mapId: string, from: number, to: number): Promise<DiffRe
   return request<DiffResult>(`/maps/${mapId}/diff?from=${from}&to=${to}`);
 }
 
-export async function getTraceability(mapId: string): Promise<TraceabilityReview | null> {
-  try {
-    return await request<TraceabilityReview>(`/maps/${mapId}/traceability`);
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 404) {
-      return null;
-    }
-    throw err;
-  }
+export async function getTraceability(mapId: string, inspection = false): Promise<TraceabilityReview | null> {
+  return trackedArtifact<TraceabilityReview>(mapId, 'traceability', inspection);
 }
 
 export function runTraceability(mapId: string): Promise<TraceabilityReview> {
-  return request<TraceabilityReview>(`/maps/${mapId}/traceability`, { method: 'POST' });
+  return mutateArtifact<TraceabilityReview>(mapId, 'traceability');
 }
 
-export async function getApiContract(mapId: string): Promise<ApiContract | null> {
-  try {
-    return await request<ApiContract>(`/maps/${mapId}/api-contract`);
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 404) {
-      return null;
-    }
-    throw err;
-  }
+export async function getApiContract(mapId: string, inspection = false): Promise<ApiContract | null> {
+  return trackedArtifact<ApiContract>(mapId, 'api_contract', inspection);
 }
 
 export function runApiContract(mapId: string): Promise<ApiContract> {
-  return request<ApiContract>(`/maps/${mapId}/api-contract`, { method: 'POST' });
+  return mutateArtifact<ApiContract>(mapId, 'api_contract');
 }
 
  
 
 // Same null-on-404 convention as getApiContract above.
-export async function getRelationalSchema(mapId: string): Promise<RelationalSchemaRecord | null> {
-  try {
-    return await request<RelationalSchemaRecord>(`/maps/${mapId}/relational-schema`);
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 404) {
-      return null;
-    }
-    throw err;
-  }
+export async function getRelationalSchema(mapId: string, inspection = false): Promise<RelationalSchemaRecord | null> {
+  return trackedArtifact<RelationalSchemaRecord>(mapId, 'relational_schema', inspection);
 }
 
 export function runRelationalSchema(mapId: string): Promise<RelationalSchemaRecord> {
-  return request<RelationalSchemaRecord>(`/maps/${mapId}/relational-schema`, { method: 'POST' });
+  return mutateArtifact<RelationalSchemaRecord>(mapId, 'relational_schema');
 }
 
 // Rendering happens on the backend (see relationalRender.ts) — this
 // just fetches the already-rendered text for the chosen dialect.
-export function getRelationalSchemaSql(mapId: string, dialect: RelationalDialect): Promise<string> {
-  return requestText(`/maps/${mapId}/relational-schema/sql?dialect=${dialect}`);
+export function getRelationalSchemaSql(mapId: string, dialect: RelationalDialect, expected?: ArtifactExportExpectation): Promise<string> {
+  if (!['postgres', 'mysql', 'sqlite'].includes(dialect)) throw new ArtifactSafetyError('Unsupported SQL export dialect.');
+  return requestText(`/maps/${mapId}/relational-schema/sql?dialect=${dialect}`, undefined, expected);
 }
 
  
 
 // Same null-on-404 convention as getApiContract/getRelationalSchema above.
-export async function getDocumentSchema(mapId: string): Promise<DocumentSchemaRecord | null> {
-  try {
-    return await request<DocumentSchemaRecord>(`/maps/${mapId}/document-schema`);
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 404) {
-      return null;
-    }
-    throw err;
-  }
+export async function getDocumentSchema(mapId: string, inspection = false): Promise<DocumentSchemaRecord | null> {
+  return trackedArtifact<DocumentSchemaRecord>(mapId, 'document_schema', inspection);
 }
 
 export function runDocumentSchema(mapId: string): Promise<DocumentSchemaRecord> {
-  return request<DocumentSchemaRecord>(`/maps/${mapId}/document-schema`, { method: 'POST' });
+  return mutateArtifact<DocumentSchemaRecord>(mapId, 'document_schema');
 }
 
 // Rendering happens on the backend (see documentRender.ts) — this just
 // fetches the already-rendered mongosh script. No dialect param, unlike
 // getRelationalSchemaSql — there's only one target here.
-export function getDocumentSchemaScript(mapId: string): Promise<string> {
-  return requestText(`/maps/${mapId}/document-schema/script`);
+export function getDocumentSchemaScript(mapId: string, expected?: ArtifactExportExpectation): Promise<string> {
+  return requestText(`/maps/${mapId}/document-schema/script`, undefined, expected);
 }
 
  
@@ -662,50 +747,36 @@ export function getDocumentSchemaScript(mapId: string): Promise<string> {
 // techStackarchitecture hash specifically (an older set may still
 // exist in storage for a since-changed hash, same as an old version's
 // contract/schema would).
-export async function getAdrs(mapId: string): Promise<AdrSetRecord | null> {
-  try {
-    return await request<AdrSetRecord>(`/maps/${mapId}/adrs`);
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 404) {
-      return null;
-    }
-    throw err;
-  }
+export async function getAdrs(mapId: string, inspection = false): Promise<AdrSetRecord | null> {
+  return trackedArtifact<AdrSetRecord>(mapId, 'adrs', inspection);
 }
 
 export function runAdrs(mapId: string): Promise<AdrSetRecord> {
-  return request<AdrSetRecord>(`/maps/${mapId}/adrs`, { method: 'POST' });
+  return mutateArtifact<AdrSetRecord>(mapId, 'adrs');
 }
 
 // Rendering happens on the backend (see adrRender.ts) — this just
 // fetches the already-rendered Markdown. No format param — ADRs only
 // ever render one way.
-export function getAdrsMarkdown(mapId: string): Promise<string> {
-  return requestText(`/maps/${mapId}/adrs/markdown`);
+export function getAdrsMarkdown(mapId: string, expected?: ArtifactExportExpectation): Promise<string> {
+  return requestText(`/maps/${mapId}/adrs/markdown`, undefined, expected);
 }
 
 // Same null-on-404 convention as the other version-tied features.
-export async function getReadme(mapId: string): Promise<ReadmeRecord | null> {
-  try {
-    return await request<ReadmeRecord>(`/maps/${mapId}/readme`);
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 404) {
-      return null;
-    }
-    throw err;
-  }
+export async function getReadme(mapId: string, inspection = false): Promise<ReadmeRecord | null> {
+  return trackedArtifact<ReadmeRecord>(mapId, 'readme', inspection);
 }
 
 export function runReadme(mapId: string): Promise<ReadmeRecord> {
-  return request<ReadmeRecord>(`/maps/${mapId}/readme`, { method: 'POST' });
+  return mutateArtifact<ReadmeRecord>(mapId, 'readme');
 }
 
 // Rendering happens on the backend (see readmeRender.ts) — this fetches
 // the FULL assembled README (every section, not just overview/
 // gettingStarted), since that's the only place with access to the
 // other four artifacts' existence for cross-referencing.
-export function getReadmeMarkdown(mapId: string): Promise<string> {
-  return requestText(`/maps/${mapId}/readme/markdown`);
+export function getReadmeMarkdown(mapId: string, expected?: ArtifactExportExpectation): Promise<string> {
+  return requestText(`/maps/${mapId}/readme/markdown`, undefined, expected);
 }
 
  
@@ -713,47 +784,33 @@ export function getReadmeMarkdown(mapId: string): Promise<string> {
 // Same null-on-404 convention as getAdrs — a 404 means no variable set
 // exists for the map's CURRENT techStackarchitecture hash (an older
 // set may still be in storage for a since-changed hash).
-export async function getEnvVars(mapId: string): Promise<EnvVarSetRecord | null> {
-  try {
-    return await request<EnvVarSetRecord>(`/maps/${mapId}/env-vars`);
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 404) {
-      return null;
-    }
-    throw err;
-  }
+export async function getEnvVars(mapId: string, inspection = false): Promise<EnvVarSetRecord | null> {
+  return trackedArtifact<EnvVarSetRecord>(mapId, 'env_vars', inspection);
 }
 
 export function runEnvVars(mapId: string): Promise<EnvVarSetRecord> {
-  return request<EnvVarSetRecord>(`/maps/${mapId}/env-vars`, { method: 'POST' });
+  return mutateArtifact<EnvVarSetRecord>(mapId, 'env_vars');
 }
 
- export function getEnvVarsFile(mapId: string): Promise<string> {
-   return requestText(`/maps/${mapId}/env-vars/file`);
+ export function getEnvVarsFile(mapId: string, expected?: ArtifactExportExpectation): Promise<string> {
+   return requestText(`/maps/${mapId}/env-vars/file`, undefined, expected);
  }
 
 // Same null-on-404 convention as getAdrs/getEnvVars — a 404 means no plan
 // exists for the map's CURRENT techStackarchitecture hash (an older one
 // may still be in storage for a since-changed hash).
-export async function getDeployment(mapId: string): Promise<DeploymentRecord | null> {
-  try {
-    return await request<DeploymentRecord>(`/maps/${mapId}/deployment`);
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 404) {
-      return null;
-    }
-    throw err;
-  }
+export async function getDeployment(mapId: string, inspection = false): Promise<DeploymentRecord | null> {
+  return trackedArtifact<DeploymentRecord>(mapId, 'deployment', inspection);
 }
 
 export function runDeployment(mapId: string): Promise<DeploymentRecord> {
-  return request<DeploymentRecord>(`/maps/${mapId}/deployment`, { method: 'POST' });
+  return mutateArtifact<DeploymentRecord>(mapId, 'deployment');
 }
 
 // Rendering happens on the backend (see deploymentRender.ts) — this
 // fetches the finished plan as Markdown. It lives there because it needs
 // the live architecture to list connections and any uncovered nodes, and
 // keeping it in one place means the screen and the download can't drift.
-export function getDeploymentMarkdown(mapId: string): Promise<string> {
-  return requestText(`/maps/${mapId}/deployment/markdown`);
+export function getDeploymentMarkdown(mapId: string, expected?: ArtifactExportExpectation): Promise<string> {
+  return requestText(`/maps/${mapId}/deployment/markdown`, undefined, expected);
 }

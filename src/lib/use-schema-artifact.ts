@@ -1,10 +1,12 @@
 'use client';
 
 import { useGeneratedArtifact } from './use-generated-artifact';
+import type { ArtifactKind } from './artifact-safety';
 
 export function useSchemaArtifact<T>(options: {
   mapId: string;
-  load: (mapId: string) => Promise<T | null>;
+  kind: ArtifactKind;
+  load: (mapId: string, inspection?: boolean) => Promise<T | null>;
   generate: (mapId: string) => Promise<T>;
   label: string;
   exportError: string;

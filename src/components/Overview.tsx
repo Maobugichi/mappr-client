@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRightIcon, ArrowUpIcon, CaretDownIcon, LinkIcon, MagnifyingGlassIcon, WrenchIcon } from '@phosphor-icons/react';
-import type { FindingSeverity, MapprSystem, RequirementsReview, TraceabilityReview } from '@/lib/api';
+import type { FindingSeverity, MapprSystem } from '@/lib/api';
 import {
   ApiError, getRequirementsReview, getTraceability, runIteration,
   runRequirementsReview, runTraceability, setRequirementDismissed,
@@ -11,6 +11,8 @@ import { ActionButton } from './ActionButton';
 import { MissingRequirements } from './MissingRequirements';
 import { OverviewDisclosure } from './OverviewDisclosure';
 import styles from './Overview.module.css';
+import { useGeneratedArtifact } from '@/lib/use-generated-artifact';
+import { ArtifactStatus, SavedArtifactFields } from './ArtifactSafety';
 
 const SEVERITY_COLOR: Record<FindingSeverity, string> = {
   low: 'var(--color-trace)',
@@ -38,7 +40,7 @@ export function Overview({ mapId, product, features, architecture, onSystemUpdat
   product: MapprSystem['product'];
   features: MapprSystem['features'];
   architecture: MapprSystem['architecture'];
-  onSystemUpdated: (system: MapprSystem) => void;
+  onSystemUpdated: (system: MapprSystem, revision: number, responseMapId: string) => void;
 }) {
   const nameById = new Map(features.map((feature) => [feature.id, feature.name]));
   const nodeById = new Map(architecture.nodes.map((node) => [node.id, node]));
@@ -50,15 +52,19 @@ export function Overview({ mapId, product, features, architecture, onSystemUpdat
   const dependencyLinesRef = useRef<SVGSVGElement>(null);
   const [activeDependency, setActiveDependency] = useState<{ sourceId: string; targetId: string } | null>(null);
   const [expandedFeatureIds, setExpandedFeatureIds] = useState<Set<string>>(() => new Set());
-  const [review, setReview] = useState<RequirementsReview | null>(null);
-  const [isRunning, setIsRunning] = useState(false);
+  const requirements = useGeneratedArtifact({ mapId, kind: 'requirements', load: getRequirementsReview, generate: runRequirementsReview,
+    loadError: 'Requirements are unavailable.', generationError: 'The requirements check could not be confirmed.', exportError: 'Requirements export is unavailable.' });
+  const { record: savedReview, isRunning, isLoading: isLoadingReview, safety: reviewSafety,
+    error: requirementsError, runMutation: mutateRequirements } = requirements;
+  const review = !reviewSafety.inspection && reviewSafety.status === 'current' ? savedReview : null;
   const [error, setError] = useState<string | null>(null);
   const [activeFindingId, setActiveFindingId] = useState<string | null>(null);
-  const [isLoadingReview, setIsLoadingReview] = useState(true);
-  const [traceability, setTraceability] = useState<TraceabilityReview | null>(null);
-  const [isTracing, setIsTracing] = useState(false);
+  const traces = useGeneratedArtifact({ mapId, kind: 'traceability', load: getTraceability, generate: runTraceability,
+    loadError: 'Traceability is unavailable.', generationError: 'The trace request could not be confirmed.', exportError: 'Traceability export is unavailable.' });
+  const { record: savedTrace, isRunning: isTracing, isLoading: isLoadingTrace, safety: traceSafety,
+    error: traceabilityError, runMutation: mutateTrace } = traces;
+  const traceability = !traceSafety.inspection && traceSafety.status === 'current' ? savedTrace : null;
   const [traceError, setTraceError] = useState<string | null>(null);
-  const [isLoadingTrace, setIsLoadingTrace] = useState(true);
   const [pendingDismissalId, setPendingDismissalId] = useState<string | null>(null);
   // Synchronous guard covers double clicks and incompatible writes before
   // React commits disabled states. Saved review/trace reads stay independent.
@@ -92,70 +98,50 @@ export function Overview({ mapId, product, features, architecture, onSystemUpdat
     }
   }, [fixDraftFeatureId, isFixFeatureExpanded, fixInputId, isFixing]);
 
-  useEffect(() => {
-    let cancelled = false;
-    getRequirementsReview(mapId)
-      .then((existing) => { if (!cancelled) setReview(existing); })
-      .catch(() => { if (!cancelled) setError('Could not load the saved requirements check. You can run a new check.'); })
-      .finally(() => { if (!cancelled) setIsLoadingReview(false); });
-    getTraceability(mapId)
-      .then((existing) => { if (!cancelled) setTraceability(existing); })
-      .catch(() => { if (!cancelled) setTraceError('Could not load saved traceability. You can trace requirements again.'); })
-      .finally(() => { if (!cancelled) setIsLoadingTrace(false); });
-    return () => { cancelled = true; };
-  }, [mapId]);
-
   const handleRun = useCallback(async () => {
     if (operationRef.current || isLoadingReview || isLoadingTrace) return;
     operationRef.current = 'review';
     lastActionTriggerRef.current = reviewTriggerRef.current;
-    setIsRunning(true);
     setError(null);
     setActiveFindingId(null);
     try {
-      setReview(await runRequirementsReview(mapId));
+      await mutateRequirements(() => runRequirementsReview(mapId));
     } catch (err) {
       setError(err instanceof ApiError ? (err.body.message ?? err.body.error) : 'Something went wrong running the requirements check.');
     } finally {
       operationRef.current = null;
-      setIsRunning(false);
     }
-  }, [mapId, isLoadingReview, isLoadingTrace, setActiveFindingId]);
+  }, [mapId, isLoadingReview, isLoadingTrace, setActiveFindingId, mutateRequirements]);
 
   const handleTrace = useCallback(async () => {
     if (operationRef.current || isLoadingReview || isLoadingTrace) return;
     operationRef.current = 'trace';
     lastActionTriggerRef.current = traceTriggerRef.current;
-    setIsTracing(true);
     setTraceError(null);
     try {
-      setTraceability(await runTraceability(mapId));
+      await mutateTrace(() => runTraceability(mapId));
     } catch (err) {
       setTraceError(err instanceof ApiError ? (err.body.message ?? err.body.error) : 'Something went wrong tracing requirements.');
     } finally {
       operationRef.current = null;
-      setIsTracing(false);
     }
-  }, [mapId, isLoadingReview, isLoadingTrace]);
+  }, [mapId, isLoadingReview, isLoadingTrace, mutateTrace]);
 
   const handleDismiss = useCallback(async (findingId: string, dismissed: boolean) => {
-    if (operationRef.current || isLoadingReview || isLoadingTrace || !review) return;
+    if (operationRef.current || isLoadingReview || isLoadingTrace || !review || !reviewSafety.canExport) return;
     operationRef.current = 'dismiss';
-    const previous = review;
     setPendingDismissalId(findingId);
     setError(null);
-    setReview({ ...review, findings: review.findings.map((finding) => finding.id === findingId ? { ...finding, dismissed } : finding) });
     if (activeFindingId === findingId && dismissed) setActiveFindingId(null);
     try {
-      setReview(await setRequirementDismissed(mapId, findingId, dismissed));
+      await mutateRequirements(() => setRequirementDismissed(mapId, findingId, dismissed));
     } catch {
-      setReview(previous);
       setError('Could not save the finding change. Your previous findings have been restored. Please try again.');
     } finally {
       operationRef.current = null;
       setPendingDismissalId(null);
     }
-  }, [mapId, review, activeFindingId, isLoadingReview, isLoadingTrace, setActiveFindingId]);
+  }, [mapId, review, activeFindingId, isLoadingReview, isLoadingTrace, setActiveFindingId, reviewSafety.canExport, mutateRequirements]);
 
   const handleOpenFix = useCallback((feature: MapprSystem['features'][number], trigger: HTMLButtonElement) => {
     if (operationRef.current) return;
@@ -179,7 +165,7 @@ export function Overview({ mapId, product, features, architecture, onSystemUpdat
     setFixError(null);
     try {
       const result = await runIteration(mapId, trimmed);
-      onSystemUpdated(result.data);
+      onSystemUpdated(result.data, result.version, result.mapId);
       setFixSuccessMessage(`v${result.version}: ${result.summary} — re-trace to confirm this feature is now linked.`);
       setFixDraftFeatureId(null);
     } catch (err) {
@@ -325,6 +311,9 @@ export function Overview({ mapId, product, features, architecture, onSystemUpdat
         </>}
       </section>
 
+      <ArtifactStatus safety={traceSafety} />
+      {traceSafety.inspection && savedTrace && <SavedArtifactFields value={savedTrace} />}
+      {traceabilityError && <p role="alert" className="font-body text-sm text-danger">{traceabilityError}</p>}
       <dl aria-label="System snapshot" className={styles.snapshot}>
         <div><dt>Features</dt><dd>{features.length}</dd></div>
         <div><dt>Traced features</dt><dd>{traceability ? tracedCount : '—'}</dd></div>
@@ -476,7 +465,8 @@ export function Overview({ mapId, product, features, architecture, onSystemUpdat
 
         <MissingRequirements findings={review?.findings ?? []} activeFindingId={activeFindingId}
           onSelectFinding={setActiveFindingId} onDismissFinding={handleDismiss}
-          isRunning={reviewPending} disabled={actionsDisabled} hasReview={Boolean(review)} error={error}
+          isRunning={reviewPending} disabled={actionsDisabled || !reviewSafety.canExport} hasReview={Boolean(review)} error={requirementsError ?? error}
+          safety={reviewSafety} savedInspection={reviewSafety.inspection ? savedReview : null}
           featureNames={nameById} onRevealFeature={revealFeature}
           action={<ActionButton ref={reviewTriggerRef} compactPending
             state={reviewPending ? 'pending' : error ? 'error' : 'idle'}

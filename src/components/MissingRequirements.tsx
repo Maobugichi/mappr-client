@@ -5,6 +5,8 @@ import { useId, useLayoutEffect, useRef, type ReactNode } from 'react';
 import type { FindingSeverity, MissingRequirement, RequirementCategory } from '@/lib/api';
 import { OverviewDisclosure } from './OverviewDisclosure';
 import styles from './Overview.module.css';
+import { ArtifactStatus, SavedArtifactFields } from './ArtifactSafety';
+import type { ArtifactSafetyState } from '@/lib/use-generated-artifact';
 
 const SEVERITY_DOT: Record<FindingSeverity, string> = {
   low: 'bg-trace', medium: 'bg-severity-medium', high: 'bg-danger', critical: 'bg-danger',
@@ -18,7 +20,7 @@ const SEVERITY_ORDER: FindingSeverity[] = ['critical', 'high', 'medium', 'low'];
 
 export function MissingRequirements({
   findings, activeFindingId, onSelectFinding, onDismissFinding, isRunning,
-  disabled, hasReview, error, action, featureNames, onRevealFeature,
+  disabled, hasReview, error, action, featureNames, onRevealFeature, safety, savedInspection,
 }: {
   findings: MissingRequirement[];
   activeFindingId: string | null;
@@ -31,6 +33,8 @@ export function MissingRequirements({
   action: ReactNode;
   featureNames: Map<string, string>;
   onRevealFeature: (featureId: string) => void;
+  safety?: ArtifactSafetyState;
+  savedInspection?: unknown;
 }) {
   const panelRef = useRef<HTMLElement>(null);
   useLayoutEffect(() => {
@@ -72,6 +76,8 @@ export function MissingRequirements({
         {action}
       </div>
       <p className={styles.sectionHint}>Findings in the stated feature set. Open a gap to review its suggestion.</p>
+      {safety && <ArtifactStatus safety={safety} />}
+      {savedInspection != null && <SavedArtifactFields value={savedInspection} />}
       {error && <p role="alert" className={styles.error}>{error}</p>}
       {!hasReview && !isRunning && <p className={styles.empty}>Run a check to identify missing requirements.</p>}
       {hasReview && sorted.length === 0 && <p className={styles.empty}>No open gaps. Nothing here is currently flagged.</p>}

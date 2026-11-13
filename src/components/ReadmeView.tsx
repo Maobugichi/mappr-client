@@ -8,22 +8,21 @@ import { useGeneratedArtifact } from '@/lib/use-generated-artifact';
 import { usePreservedViewState } from '@/lib/artifact-workspace';
 import { ArtifactActionButton, ArtifactActions } from './ArtifactActions';
 import { MotionDisclosure } from './MotionDisclosure';
+import { ArtifactSafety, SavedArtifactFields } from './ArtifactSafety';
+import { artifactDocument, generateArtifactDocument } from '@/lib/artifact-document';
+import { exportExpectation } from '@/lib/artifact-safety';
 import { ReadmeMarkdown } from './ReadmeMarkdown';
 import styles from './ReadmeView.module.css';
 
 // Commit the record and its complete rendered Markdown together. A failed
 // preview request must never pair a new version label with old content.
-async function loadReadmePreview(mapId: string) {
-  const record = await getReadme(mapId);
-  if (!record) return null;
-  const markdown = await getReadmeMarkdown(mapId);
-  return { record, markdown };
+async function loadReadmePreview(mapId: string, inspection = false) {
+  const record = await getReadme(mapId, inspection);
+  return artifactDocument(record, () => getReadme(mapId), (current) => getReadmeMarkdown(mapId, exportExpectation(current)), inspection);
 }
 
 async function generateReadmePreview(mapId: string) {
-  const record = await runReadme(mapId);
-  const markdown = await getReadmeMarkdown(mapId);
-  return { record, markdown };
+  return generateArtifactDocument(() => runReadme(mapId), () => getReadme(mapId), (current) => getReadmeMarkdown(mapId, exportExpectation(current)));
 }
 
 function ReadmeOutline({ headings }: { headings: ReadmeDocument['headings'] }) {
@@ -52,21 +51,21 @@ function ReadmeContent({ mapId }: { mapId: string }) {
   const [lastAction, setLastAction] = usePreservedViewState<'load' | 'generate' | 'download'>('ReadmeView:last-action', 'load');
   const {
     record: preview, isLoading, isRunning, isDownloading, isReloading, isWorking, error,
-    downloaded, runGeneration, runDownload, runReload,
+    downloaded, safety, runGeneration, runDownload, runReload,
   } = useGeneratedArtifact({
-    mapId, load: loadReadmePreview, generate: generateReadmePreview,
+    mapId, kind: 'readme', load: loadReadmePreview, generate: generateReadmePreview,
     loadError: 'Could not load the saved README. Retry loading, or generate a new README.',
     generationError: 'Could not generate the README and load its preview. Retry loading to check the saved README, or try generating again.',
     exportError: 'Could not prepare the README download.',
   });
   const markdown = preview?.markdown;
-  const document = useMemo(() => markdown === undefined ? null : prepareReadmeDocument(markdown, 'readme-' + documentId), [markdown, documentId]);
+  const document = useMemo(() => markdown == null ? null : prepareReadmeDocument(markdown, 'readme-' + documentId), [markdown, documentId]);
 
   const handleDownload = (trigger: HTMLButtonElement) => {
     if (!preview || isWorking || isLoading) return;
     setLastAction('download');
-    return runDownload(trigger, async () => ({
-      filename: 'README.md', content: preview.markdown, mimeType: 'text/markdown',
+    return runDownload(trigger, async (fresh) => ({
+      filename: 'README.md', content: await getReadmeMarkdown(mapId, exportExpectation(fresh)), mimeType: 'text/markdown',
     }));
   };
 
@@ -95,7 +94,7 @@ function ReadmeContent({ mapId }: { mapId: string }) {
   else if (error) statusMessage = 'No README is currently displayed.';
 
   return (
-    <section className={styles.file} aria-label="Repository file preview">
+    <ArtifactSafety safety={safety}><section className={styles.file} aria-label="Repository file preview">
       <header className={styles.fileHeader}>
         <div className={styles.fileIdentity}>
           <FileTextIcon size={16} className={styles.fileIcon} aria-hidden="true" />
@@ -106,7 +105,7 @@ function ReadmeContent({ mapId }: { mapId: string }) {
           {document && document.headings.length > 0 && <ReadmeOutline headings={document.headings} />}
           {preview && <ArtifactActionButton action="export" title="Export README Markdown" variant="secondary" disabled={isWorking || isLoading}
             onClick={(event) => void handleDownload(event.currentTarget)}
-            state={error && lastAction === 'download' ? 'error' : downloaded ? 'success' : 'idle'}
+            state={isDownloading ? 'pending' : error && lastAction === 'download' ? 'error' : downloaded ? 'success' : 'idle'}
             idleLabel="Markdown export" pendingLabel="Preparing README download" successLabel="Markdown export" errorLabel="Retry export" />}
           <ArtifactActionButton action="generate" title={preview ? 'Regenerate README' : 'Generate README'} regenerate={Boolean(preview)} ref={generateTriggerRef} disabled={isWorking || isLoading}
             onClick={(event) => void handleGenerate(event.currentTarget)}
@@ -129,11 +128,11 @@ function ReadmeContent({ mapId }: { mapId: string }) {
             </button>
           </div>
       </MotionDisclosure>
-      {document && preview ? <article className={styles.document} aria-label="README.md contents">
-        {preview.markdown.trim() ? <ReadmeMarkdown document={document} />
+      {preview && safety.inspection ? <SavedArtifactFields value={preview.record} /> : document && preview ? <article className={styles.document} aria-label="README.md contents">
+        {preview.markdown?.trim() ? <ReadmeMarkdown document={document} />
           : <p className={styles.empty}>The README is empty. Try regenerating.</p>}
       </article> : !pending && !error && <p className={styles.empty}>No README generated for the current version yet.</p>}
-    </section>
+    </section></ArtifactSafety>
   );
 }
 

@@ -1,0 +1,13 @@
+.canvas { container-type: inline-size; }
+/* Let React Flow own gestures only on its drawing surface. The inspector and
+   surrounding page retain their normal scrolling and pointer behavior. */
+.flow :global(.react-flow__pane), .flow :global(.react-flow__node) { touch-action: none; }
+.flow :global(.react-flow__viewport) { transition: none; }
+.controls :global(.react-flow__controls-button:enabled:active) { background: var(--color-canvas-grid); }
+.controls :global(.react-flow__controls-button:focus-visible) { outline: 2px solid var(--color-trace); outline-offset: 2px; }
+@container (max-width: 640px) {
+  .canvas .controls :global(.react-flow__controls-button) { box-sizing: border-box; width: 44px; height: 44px; }
+}
+@media (pointer: coarse) {
+  .canvas .controls :global(.react-flow__controls-button) { box-sizing: border-box; width: 44px; height: 44px; }
+}

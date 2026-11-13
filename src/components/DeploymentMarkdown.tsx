@@ -5,10 +5,12 @@ import type { Root } from 'mdast';
 import type { Plugin } from 'unified';
 import type { DeploymentDocument } from '@/lib/deployment-runbook';
 import styles from './DeploymentView.module.css';
+import { useArtifactSafety } from './ArtifactSafety';
 
 const preparedTree: Plugin<[Root], Root> = (tree) => () => tree;
 
 function DeploymentCodeBlock({ text, children }: { text: string; children: ReactNode }) {
+  const safety = useArtifactSafety();
   const id = useId();
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const pending = useRef(false);
@@ -21,12 +23,13 @@ function DeploymentCodeBlock({ text, children }: { text: string; children: React
   }, [text]);
 
   const copy = async () => {
-    if (pending.current) return;
+    if (pending.current || !safety?.canExport) return;
     pending.current = true;
     const current = ++request.current;
     window.clearTimeout(timer.current);
     setState('idle');
     try {
+      await safety.verifyCopy();
       await navigator.clipboard.writeText(text);
       if (request.current !== current) return;
       setState('copied');
@@ -40,8 +43,9 @@ function DeploymentCodeBlock({ text, children }: { text: string; children: React
 
   return <div className={styles.codeBlock}>
     <button type="button" className={styles.copy} data-state={state}
+      disabled={!safety?.canExport} aria-describedby={!safety?.canExport ? safety?.descriptionId : undefined}
       aria-label={state === 'failed' ? 'Retry copying code block' : 'Copy code block'}
-      aria-controls={id + '-code'} aria-describedby={state === 'failed' ? id + '-status' : undefined}
+      aria-controls={id + '-code'} aria-details={state === 'failed' ? id + '-status' : undefined}
       title={state === 'copied' ? 'Copied' : 'Copy code'} onClick={() => void copy()}>
       {state === 'copied' ? <CheckIcon size={14} weight="bold" aria-hidden="true" />
         : state === 'failed' ? <WarningIcon size={14} aria-hidden="true" /> : <CopyIcon size={14} aria-hidden="true" />}
@@ -49,7 +53,7 @@ function DeploymentCodeBlock({ text, children }: { text: string; children: React
     <pre id={id + '-code'} tabIndex={0} aria-label="Deployment code block">{children}</pre>
     <p id={id + '-status'} role="status" aria-live="polite" aria-atomic="true"
       className={state === 'failed' ? styles.copyError : styles.copyFeedback}>
-      {state === 'copied' ? 'Copied' : state === 'failed' ? 'Could not copy. Select the code and copy it manually.' : ''}
+      {state === 'copied' ? 'Copied' : state === 'failed' ? 'Could not verify or copy this content. Refresh current output and retry.' : ''}
     </p>
   </div>;
 }

@@ -8,44 +8,43 @@ import { useGeneratedArtifact } from '@/lib/use-generated-artifact';
 import { ArtifactActionButton, ArtifactActions } from './ArtifactActions';
 import { DeploymentMarkdown } from './DeploymentMarkdown';
 import { MotionDisclosure } from './MotionDisclosure';
+import { ArtifactSafety, SavedArtifactFields } from './ArtifactSafety';
+import { artifactDocument, generateArtifactDocument } from '@/lib/artifact-document';
+import { exportExpectation } from '@/lib/artifact-safety';
 import styles from './DeploymentView.module.css';
 
 // The API resolves the current techStack + architecture hash. Commit its
 // record and rendered Markdown together so counts always match the preview.
-async function loadDeploymentPreview(mapId: string) {
-  const record = await getDeployment(mapId);
-  if (!record) return null;
-  const markdown = await getDeploymentMarkdown(mapId);
-  return { record, markdown };
+async function loadDeploymentPreview(mapId: string, inspection = false) {
+  const record = await getDeployment(mapId, inspection);
+  return artifactDocument(record, () => getDeployment(mapId), (current) => getDeploymentMarkdown(mapId, exportExpectation(current)), inspection);
 }
 
 async function generateDeploymentPreview(mapId: string) {
-  const record = await runDeployment(mapId);
-  const markdown = await getDeploymentMarkdown(mapId);
-  return { record, markdown };
+  return generateArtifactDocument(() => runDeployment(mapId), () => getDeployment(mapId), (current) => getDeploymentMarkdown(mapId, exportExpectation(current)));
 }
 
 function DeploymentContent({ mapId }: { mapId: string }) {
   const generateTriggerRef = useRef<HTMLButtonElement>(null);
   const {
     record: preview, isLoading, isRunning, isDownloading, isReloading, isWorking, error,
-    downloaded, runGeneration, runDownload, runReload,
+    downloaded, safety, runGeneration, runDownload, runReload,
   } = useGeneratedArtifact({
-    mapId, load: loadDeploymentPreview, generate: generateDeploymentPreview,
+    mapId, kind: 'deployment', load: loadDeploymentPreview, generate: generateDeploymentPreview,
     loadError: 'Could not load the saved deployment plan. Retry loading, or generate a new plan.',
     generationError: 'Could not generate the deployment plan and load its preview. Retry loading to check the saved plan, or try generating again.',
     exportError: 'Could not prepare the deployment plan download.',
   });
   const markdown = preview?.markdown;
-  const runbook = useMemo(() => markdown === undefined ? null : prepareDeploymentDocument(markdown), [markdown]);
+  const runbook = useMemo(() => markdown == null ? null : prepareDeploymentDocument(markdown), [markdown]);
   const pending = isLoading || isRunning || isReloading;
 
-  // Export the exact displayed Markdown, including backend-rendered
-  // connections and uncovered nodes, without another request.
+  // Every download fetches the guarded renderer again, including same-revision
+  // changes to supporting artifacts. Never download cached preview Markdown.
   const handleDownload = (trigger: HTMLButtonElement) => {
     if (!preview) return;
-    return runDownload(trigger, async () => ({
-      filename: 'DEPLOYMENT.md', content: preview.markdown, mimeType: 'text/markdown',
+    return runDownload(trigger, async (fresh) => ({
+      filename: 'DEPLOYMENT.md', content: await getDeploymentMarkdown(mapId, exportExpectation(fresh)), mimeType: 'text/markdown',
     }));
   };
 
@@ -69,7 +68,7 @@ function DeploymentContent({ mapId }: { mapId: string }) {
   } else if (error) statusMessage = 'No deployment plan is currently displayed.';
 
   return (
-    <section className={styles.workspace} aria-label="Deployment runbook">
+    <ArtifactSafety safety={safety}><section className={styles.workspace} aria-label="Deployment runbook">
       <div>
         <div className="flex flex-col items-start justify-between gap-4 lg:flex-row">
           <div className="min-w-0">
@@ -81,6 +80,7 @@ function DeploymentContent({ mapId }: { mapId: string }) {
           <ArtifactActions>
             {preview && (
               <ArtifactActionButton action="export" title="Export deployment Markdown" variant="secondary"
+                state={isDownloading ? 'pending' : downloaded ? 'success' : 'idle'}
                 onClick={(event) => void handleDownload(event.currentTarget)}
                 disabled={isWorking || isLoading}
                 idleLabel="Markdown export" pendingLabel="Preparing deployment download" />
@@ -110,14 +110,14 @@ function DeploymentContent({ mapId }: { mapId: string }) {
         </MotionDisclosure>
       </div>
 
-      {preview && runbook ? (
+      {preview && safety.inspection ? <SavedArtifactFields value={preview.record} /> : preview && runbook ? (
         <article aria-label="Deployment instructions" className={styles.document}>
-            {preview.markdown.trim() ? <DeploymentMarkdown document={runbook} /> : (
+            {preview.markdown?.trim() ? <DeploymentMarkdown document={runbook} /> : (
               <p className="font-body text-sm text-text-muted">The deployment plan is empty. Try regenerating.</p>
             )}
         </article>
       ) : !pending && !error && <p className={styles.summary}>{statusMessage}</p>}
-    </section>
+    </section></ArtifactSafety>
   );
 }
 

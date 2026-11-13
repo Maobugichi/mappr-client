@@ -75,6 +75,13 @@ export function envExamplePolicy(variable: Pick<EnvVar, 'name' | 'secret' | 'pla
   }
 }
 
+// Reuse the existing display policy for owner-only structured inspection too.
+// This is a view projection; the saved record/export data is never rewritten.
+export function environmentInspectionView<T extends { vars: EnvVar[] }>(record: T): T {
+  return { ...record, vars: record.vars.map((variable) => envExamplePolicy(variable).hidden
+    ? { ...variable, placeholder: 'Sensitive-looking example withheld' } : variable) };
+}
+
 export class UnsafeEnvExampleError extends Error {
   constructor(message = 'The template contains a sensitive-looking example. Regenerate the variables before exporting.') {
     super(message);

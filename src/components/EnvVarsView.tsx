@@ -4,11 +4,13 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { CheckIcon, CopyIcon, GearSixIcon, WarningIcon } from '@phosphor-icons/react';
 import type { EnvVar, MapprSystem } from '@/lib/api';
 import { getEnvVars, getEnvVarsFile, runEnvVars } from '@/lib/api';
-import { assertSafeEnvTemplate, envExamplePolicy, UnsafeEnvExampleError } from '@/lib/env-vars-reference';
+import { assertSafeEnvTemplate, envExamplePolicy, environmentInspectionView, UnsafeEnvExampleError } from '@/lib/env-vars-reference';
 import { useGeneratedArtifact } from '@/lib/use-generated-artifact';
 import { usePreservedViewState } from '@/lib/artifact-workspace';
 import { ArtifactActionButton, ArtifactActions } from './ArtifactActions';
 import { MotionDisclosure } from './MotionDisclosure';
+import { ArtifactSafety, SavedArtifactFields, useArtifactSafety } from './ArtifactSafety';
+import { exportExpectation } from '@/lib/artifact-safety';
 import styles from './EnvVarsView.module.css';
 
 type Section = { key: string; title: string; vars: EnvVar[] };
@@ -28,6 +30,7 @@ function groupIntoSections(vars: EnvVar[], nodes: MapprSystem['architecture']['n
 }
 
 function EnvVarRow({ envVar }: { envVar: EnvVar }) {
+  const safety = useArtifactSafety();
   const feedbackId = useId();
   const policy = envExamplePolicy(envVar);
   const [result, setResult] = useState<{ variable: EnvVar; target: 'name' | 'example'; state: 'copied' | 'failed' } | null>(null);
@@ -42,12 +45,13 @@ function EnvVarRow({ envVar }: { envVar: EnvVar }) {
   }, [envVar]);
 
   const copy = async (target: 'name' | 'example') => {
-    if (pending.current || (target === 'example' && !policy.canCopy)) return;
+    if (pending.current || !safety?.canExport || (target === 'example' && !policy.canCopy)) return;
     pending.current = true;
     const currentRequest = ++request.current;
     window.clearTimeout(resetTimer.current);
     setResult(null);
     try {
+      await safety.verifyCopy();
       await navigator.clipboard.writeText(target === 'name' ? envVar.name : envVar.placeholder);
       if (currentRequest !== request.current) return;
       setResult({ variable: envVar, target, state: 'copied' });
@@ -64,8 +68,9 @@ function EnvVarRow({ envVar }: { envVar: EnvVar }) {
   const copyButton = (target: 'name' | 'example') => {
     const state = current?.target === target ? current.state : 'idle';
     return <button type="button" className={styles.copyButton} data-state={state}
+      disabled={!safety?.canExport} aria-describedby={!safety?.canExport ? safety?.descriptionId : undefined}
       aria-label={target === 'name' ? `Copy ${envVar.name} variable name` : `Copy example for ${envVar.name}`}
-      aria-describedby={state === 'failed' ? feedbackId : undefined}
+      aria-details={state === 'failed' ? feedbackId : undefined}
       title={state === 'copied' ? 'Copied' : state === 'failed' ? 'Retry copying' : target === 'name' ? 'Copy variable name' : 'Copy example'}
       onClick={() => void copy(target)}>
       {state === 'copied' ? <CheckIcon size={14} weight="bold" aria-hidden="true" />
@@ -92,7 +97,7 @@ function EnvVarRow({ envVar }: { envVar: EnvVar }) {
     <p id={feedbackId} role="status" aria-live="polite" aria-atomic="true"
       className={current ? styles.copyFeedback : 'sr-only'} data-state={current?.state}>
       {current?.state === 'copied' ? current.target === 'name' ? 'Variable name copied.' : 'Example copied.'
-        : current?.state === 'failed' ? `Could not copy. Select the ${current.target === 'name' ? 'variable name' : 'example'} and copy it manually.` : ''}
+        : current?.state === 'failed' ? 'Could not verify or copy this content. Refresh current output and retry.' : ''}
     </p>
   </li>;
 }
@@ -105,13 +110,13 @@ function EnvVarsContent({ mapId, nodes }: { mapId: string; nodes: MapprSystem['a
   const exportEpoch = useRef(0);
   useEffect(() => () => { exportEpoch.current++; }, []);
   // Saved variables remain keyed by the current tech stack + architecture hash.
-  const { record, isLoading, isRunning, isDownloading, isWorking, error, downloaded, runGeneration, runDownload } = useGeneratedArtifact({
-    mapId, load: getEnvVars, generate: runEnvVars,
+  const { record, isLoading, isRunning, isDownloading, isWorking, error, downloaded, safety, runGeneration, runDownload } = useGeneratedArtifact({
+    mapId, kind: 'env_vars', load: getEnvVars, generate: runEnvVars,
     loadError: 'Could not load saved environment variables. Reopen this view to retry, or generate new variables.',
     generationError: 'Something went wrong generating the environment variables.',
     exportError: 'Could not prepare a safe .env.example export.',
   });
-  const sections = useMemo(() => record ? groupIntoSections(record.vars, nodes) : [], [record, nodes]);
+  const sections = useMemo(() => record && !safety.inspection ? groupIntoSections(record.vars, nodes) : [], [record, nodes, safety.inspection]);
   const sectionId = (key: string) => contentId + '-service-' + encodeURIComponent(key);
 
   const handleGenerate = (trigger: HTMLButtonElement) => {
@@ -128,9 +133,9 @@ function EnvVarsContent({ mapId, nodes }: { mapId: string; nodes: MapprSystem['a
     const epoch = ++exportEpoch.current;
     setLastAction('download');
     setExportIssue(null);
-    const operation = runDownload(trigger, async () => {
-      const file = await getEnvVarsFile(mapId);
-      try { assertSafeEnvTemplate(file, record.vars); }
+    const operation = runDownload(trigger, async (fresh) => {
+      const file = await getEnvVarsFile(mapId, exportExpectation(fresh));
+      try { assertSafeEnvTemplate(file, fresh.vars); }
       catch (issue) {
         if (epoch === exportEpoch.current && issue instanceof UnsafeEnvExampleError) setExportIssue(issue.message);
         throw issue;
@@ -141,7 +146,7 @@ function EnvVarsContent({ mapId, nodes }: { mapId: string; nodes: MapprSystem['a
   };
   const displayedError = error && lastAction === 'download' ? exportIssue ?? error : error;
 
-  return <section className={styles.reference} aria-label="Environment variables">
+  return <ArtifactSafety safety={safety}><section className={styles.reference} aria-label="Environment variables">
     <header className={styles.header}>
       <div><h2>Environment Variables</h2>
         {record && <p className={styles.summary}>{record.vars.length} variable{record.vars.length === 1 ? '' : 's'} identified</p>}
@@ -164,6 +169,7 @@ function EnvVarsContent({ mapId, nodes }: { mapId: string; nodes: MapprSystem['a
         <a href={'#' + encodeURIComponent(sectionId(section.key))} onClick={() => document.getElementById(sectionId(section.key))?.focus({ preventScroll: true })}>{section.title}</a>
       </li>)}</ul>
     </nav>}
+    {record && safety.inspection && <SavedArtifactFields value={environmentInspectionView(record)} />}
     <div className={styles.sections}>
       {record?.vars.length === 0 && <p className={styles.empty}>No environment variables were identified. Try regenerating.</p>}
       {!record && !isLoading && !isRunning && !error && <p className={styles.empty}>No variables generated for the current tech stack and architecture yet.</p>}
@@ -176,7 +182,7 @@ function EnvVarsContent({ mapId, nodes }: { mapId: string; nodes: MapprSystem['a
       {isLoading ? 'Loading saved environment variables.' : isRunning ? 'Generating environment variables. Existing variables remain available.'
         : isDownloading ? 'Preparing .env.example download.' : downloaded ? '.env.example download prepared.' : ''}
     </p>
-  </section>;
+  </section></ArtifactSafety>;
 }
 
 export function EnvVarsView(props: { mapId: string; nodes: MapprSystem['architecture']['nodes'] }) {

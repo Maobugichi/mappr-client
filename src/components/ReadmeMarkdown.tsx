@@ -6,10 +6,12 @@ import type { Nodes, Root } from 'mdast';
 import type { Plugin } from 'unified';
 import type { ReadmeDocument } from '@/lib/readme-markdown';
 import styles from './ReadmeView.module.css';
+import { useArtifactSafety } from './ArtifactSafety';
 
 const preparedTree: Plugin<[Root], Root> = (tree) => () => tree;
 
 function ReadmeCodeBlock({ text, children }: { text: string; children: ReactNode }) {
+  const safety = useArtifactSafety();
   const blockId = useId();
   const [result, setResult] = useState<{ text: string; state: 'copied' | 'failed' } | null>(null);
   const state = result?.text === text ? result.state : 'idle';
@@ -24,12 +26,13 @@ function ReadmeCodeBlock({ text, children }: { text: string; children: ReactNode
   }, [text]);
 
   const copy = async () => {
-    if (pending.current) return;
+    if (pending.current || !safety?.canExport) return;
     pending.current = true;
     const currentRequest = ++request.current;
     window.clearTimeout(resetTimer.current);
     setResult(null);
     try {
+      await safety.verifyCopy();
       await navigator.clipboard.writeText(text);
       if (currentRequest !== request.current) return;
       setResult({ text, state: 'copied' });
@@ -46,8 +49,9 @@ function ReadmeCodeBlock({ text, children }: { text: string; children: ReactNode
 
   return <div className={styles.codeBlock}>
     <button type="button" className={styles.codeCopyButton} data-state={state}
+      disabled={!safety?.canExport} aria-describedby={!safety?.canExport ? safety?.descriptionId : undefined}
       aria-label={state === 'failed' ? 'Retry copying code block' : 'Copy code block'}
-      aria-controls={blockId + '-code'} aria-describedby={state === 'failed' ? blockId + '-copy-status' : undefined}
+      aria-controls={blockId + '-code'} aria-details={state === 'failed' ? blockId + '-copy-status' : undefined}
       title={state === 'copied' ? 'Copied' : state === 'failed' ? 'Retry copying' : 'Copy code'}
       onClick={() => void copy()}>
       {state === 'copied' ? <CheckIcon size={14} weight="bold" aria-hidden="true" />
@@ -56,7 +60,7 @@ function ReadmeCodeBlock({ text, children }: { text: string; children: ReactNode
     <pre id={blockId + '-code'} tabIndex={0} aria-label="Code block">{children}</pre>
     <p id={blockId + '-copy-status'} role="status" aria-live="polite" aria-atomic="true"
       className={state === 'failed' ? styles.codeCopyError : styles.codeCopyFeedback}>
-      {state === 'copied' ? 'Copied' : state === 'failed' ? 'Could not copy. Select the code and copy it manually.' : ''}
+      {state === 'copied' ? 'Copied' : state === 'failed' ? 'Could not verify or copy this content. Refresh current output and retry.' : ''}
     </p>
   </div>;
 }

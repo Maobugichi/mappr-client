@@ -25,14 +25,15 @@ import { ArchitectureReview } from './ArchitectureReview';
 import { IterationBar } from './IterationBar';
 import { DiffView } from './DiffView';
 import styles from './ArchitectureCanvas.module.css';
+import { useGeneratedArtifact } from '@/lib/use-generated-artifact';
+import { ArtifactStatus } from './ArtifactSafety';
+import { architectureDisplayBounds, architectureLayoutKey, type ArchitectureCanvasMemory } from '@/lib/architecture-canvas-memory';
 import {
   ApiError,
   getArchitectureReview,
   getDiff,
   runArchitectureReview,
-  runIteration,
   setFindingDismissed,
-  type ArchitectureReview as ArchitectureReviewData,
   type DiffResult,
   type MapprSystem,
 } from '@/lib/api';
@@ -44,47 +45,52 @@ const defaultViewport = { x: 0, y: 0, zoom: ARCHITECTURE_INITIAL_MAX_ZOOM };
 type ArchitectureCanvasProps = {
   mapId: string;
   architecture: MapprSystem['architecture'];
-  onSystemUpdated: (system: MapprSystem) => void;
+  canonicalRevision?: number | null;
+  selectedNodeId: string | null;
+  onSelectedNodeChange: (id: string | null) => void;
+  viewState: ArchitectureCanvasMemory;
+  onViewStateChange: (update: (previous: ArchitectureCanvasMemory) => ArchitectureCanvasMemory) => void;
 };
 
-function ArchitectureCanvasInner({ mapId, architecture, onSystemUpdated }: ArchitectureCanvasProps) {
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+function ArchitectureCanvasInner({ mapId, architecture, canonicalRevision, selectedNodeId, onSelectedNodeChange, viewState, onViewStateChange }: ArchitectureCanvasProps) {
+  const [initialViewport] = useState(() => viewState.viewport ?? defaultViewport);
+  const [restoredViewport] = useState(() => !!viewState.viewport);
+  const lastCanvasSize = useRef<string | null>(null);
   // Preserve panel contents during exit, independently of active selection.
-  const [inspectorNodeId, setInspectorNodeId] = useState<string | null>(null);
+  const [inspectorNodeId, setInspectorNodeId] = useState<string | null>(selectedNodeId);
   const inspectorTriggerRef = useRef<HTMLElement | null>(null);
 
   const handleSelectNode = useCallback((id: string, trigger: HTMLElement) => {
     inspectorTriggerRef.current = trigger;
-    setSelectedNodeId(id);
+    onSelectedNodeChange(id);
     setInspectorNodeId(id);
-  }, []);
+  }, [onSelectedNodeChange]);
 
   const handleCloseInspector = useCallback(() => {
-    setSelectedNodeId(null);
+    onSelectedNodeChange(null);
     if (inspectorTriggerRef.current?.isConnected) {
       inspectorTriggerRef.current.focus({ preventScroll: true });
     }
-  }, []);
+  }, [onSelectedNodeChange]);
 
-  const [review, setReview] = useState<ArchitectureReviewData | null>(null);
+  const reviewArtifact = useGeneratedArtifact({ mapId, kind: 'critique', load: getArchitectureReview, generate: runArchitectureReview,
+    loadError: 'The saved review is unavailable.', generationError: 'The review outcome could not be confirmed.', exportError: 'Review export is unavailable.' });
+  const { record: savedReview, safety: reviewSafety, isRunning: isRunningReview, isLoading: isLoadingReview,
+    error: reviewError, resultRevision: reviewRevision, runGeneration: runReview, runReload: reloadReview, runMutation: mutateReview } = reviewArtifact;
+  const review = !reviewSafety.inspection && reviewSafety.status === 'current' ? savedReview : null;
   // Visibility follows user actions, never saved data or request completion.
   const [isReviewPanelOpen, setIsReviewPanelOpen] = useState(false);
-  const [isRunningReview, setIsRunningReview] = useState(false);
-  const [isLoadingReview, setIsLoadingReview] = useState(true);
-  const [reviewError, setReviewError] = useState<string | null>(null);
-  const [reviewErrorKind, setReviewErrorKind] = useState<'load' | 'run' | null>(null);
-  const [reviewRevision, setReviewRevision] = useState(0);
-  const [hasCompletedReview, setHasCompletedReview] = useState(false);
+  const reviewErrorKind = reviewError ? 'load' : null;
+  const hasCompletedReview = reviewRevision > 0 && reviewSafety.status === 'current';
   const [activeFindingId, setActiveFindingId] = useState<string | null>(null);
   const reviewTriggerRef = useRef<HTMLButtonElement>(null);
   const reviewContentRef = useRef<HTMLSpanElement>(null);
   const restoreReviewFocusRef = useRef(false);
-  const reviewRequestRef = useRef(false);
-  const reviewEpochRef = useRef(0);
   const isReviewPending = isRunningReview || isLoadingReview;
   const reviewActionLabel = isLoadingReview ? 'Loading review...'
     : isRunningReview ? 'Reviewing...'
-    : reviewError ? reviewErrorKind === 'load' ? 'Retry loading' : 'Retry review'
+    : reviewError ? 'Retry loading'
+    : reviewSafety.inspection && savedReview ? 'View saved review'
     : review ? isReviewPanelOpen ? 'Review again' : 'View review' : 'Run Architecture Review';
 
   useLayoutEffect(() => {
@@ -114,128 +120,30 @@ function ArchitectureCanvasInner({ mapId, architecture, onSystemUpdated }: Archi
     }
   }, [isRunningReview, isLoadingReview]);
 
-  const [isIterating, setIsIterating] = useState(false);
   const [iterationError, setIterationError] = useState<string | null>(null);
-  const [lastIterationSummary, setLastIterationSummary] = useState<string | null>(null);
-  const [versionRefreshKey, setVersionRefreshKey] = useState(0);
 
   const [diffResult, setDiffResult] = useState<DiffResult | null>(null);
   const [isDiffing, setIsDiffing] = useState(false);
 
   const loadSavedReview = useCallback(async () => {
-    if (reviewRequestRef.current) return;
-    reviewRequestRef.current = true;
-    const epoch = ++reviewEpochRef.current;
-    setIsLoadingReview(true);
-    setReviewError(null);
-    setReviewErrorKind(null);
-    try {
-      const existing = await getArchitectureReview(mapId);
-      if (epoch !== reviewEpochRef.current) return;
-      setReview(existing);
-    } catch {
-      if (epoch !== reviewEpochRef.current) return;
-      setReviewError('Could not load the saved review. Retry loading to check again.');
-      setReviewErrorKind('load');
-    } finally {
-      if (epoch === reviewEpochRef.current) {
-        reviewRequestRef.current = false;
-        setIsLoadingReview(false);
-      }
-    }
-  }, [mapId]);
-
-  useEffect(() => {
-    let active = true;
-    // Initial loading is already represented in state. Start the request
-    // after this effect setup, and discard Strict Mode's cancelled setup.
-    void Promise.resolve().then(() => { if (active) void loadSavedReview(); });
-    return () => {
-      active = false;
-      reviewEpochRef.current += 1;
-      reviewRequestRef.current = false;
-    };
-  }, [loadSavedReview]);
+    await reloadReview(reviewTriggerRef.current ?? undefined);
+  }, [reloadReview]);
 
   const handleRunReview = useCallback(async () => {
-    if (reviewRequestRef.current || isLoadingReview) return;
-    reviewRequestRef.current = true;
-    const epoch = ++reviewEpochRef.current;
+    if (isRunningReview || isLoadingReview || !reviewTriggerRef.current) return;
     restoreReviewFocusRef.current = document.activeElement === reviewTriggerRef.current;
-    setIsRunningReview(true);
-    setReviewError(null);
-    setReviewErrorKind(null);
-    setHasCompletedReview(false);
     setIsReviewPanelOpen(true);
-    setDiffResult(null); // left-side panels are mutually exclusive
+    setDiffResult(null);
     setActiveFindingId(null);
-    try {
-      const result = await runArchitectureReview(mapId);
-      if (epoch !== reviewEpochRef.current) return;
-      setReview(result);
-      setReviewRevision((revision) => revision + 1);
-      setHasCompletedReview(true);
-    } catch (err) {
-      if (epoch !== reviewEpochRef.current) return;
-      setReviewErrorKind('run');
-      if (err instanceof ApiError) {
-        setReviewError(err.body.message ?? err.body.error);
-      } else {
-        setReviewError('Could not complete the architecture review. Please try again.');
-      }
-    } finally {
-      if (epoch === reviewEpochRef.current) {
-        reviewRequestRef.current = false;
-        setIsRunningReview(false);
-      }
-    }
-  }, [mapId, isLoadingReview]);
+    await runReview(reviewTriggerRef.current);
+  }, [isRunningReview, isLoadingReview, runReview]);
 
-  const handleDismissFinding = useCallback(
-    (findingId: string, dismissed: boolean) => {
-      setReview((prev) =>
-        prev
-          ? {
-              ...prev,
-              findings: prev.findings.map((f) =>
-                f.id === findingId ? { ...f, dismissed } : f
-              ),
-            }
-          : prev
-      );
-      if (activeFindingId === findingId && dismissed) {
-        setActiveFindingId(null);
-      }
-      setFindingDismissed(mapId, findingId, dismissed)
-        .then((result) => setReview(result))
-        .catch((err) => {
-          console.error('Failed to persist finding dismissal:', err);
-        });
-    },
-    [mapId, activeFindingId]
-  );
+  const handleDismissFinding = useCallback(async (findingId: string, dismissed: boolean) => {
+    if (!reviewSafety.canExport) return;
+    if (activeFindingId === findingId && dismissed) setActiveFindingId(null);
+    await mutateReview(() => setFindingDismissed(mapId, findingId, dismissed));
+  }, [reviewSafety.canExport, activeFindingId, mutateReview, mapId]);
 
-  const handleIterate = useCallback(
-    async (instruction: string) => {
-      setIsIterating(true);
-      setIterationError(null);
-      try {
-        const result = await runIteration(mapId, instruction);
-        setLastIterationSummary(`v${result.version}: ${result.summary}`);
-        setVersionRefreshKey((k) => k + 1);
-        onSystemUpdated(result.data);
-      } catch (err) {
-        if (err instanceof ApiError) {
-          setIterationError(err.body.message ?? err.body.error);
-        } else {
-          setIterationError('Something went wrong applying that change.');
-        }
-      } finally {
-        setIsIterating(false);
-      }
-    },
-    [mapId, onSystemUpdated]
-  );
 
   const handleCompare = useCallback(
     async (from: number, to: number) => {
@@ -265,30 +173,19 @@ function ArchitectureCanvasInner({ mapId, architecture, onSystemUpdated }: Archi
     [activeFinding]
   );
 
-  const rawNodes: Node[] = architecture.nodes.map((node) => ({
-    id: node.id,
-    type: 'architecture',
-    data: { label: node.label, type: node.type },
-    position: { x: 0, y: 0 },
-  }));
-
-  const rawEdges: Edge[] = architecture.edges.map((edge, index) => ({
-    id: `${edge.from}-${edge.to}-${index}`,
-    type: 'architecture',
-    source: edge.from,
-    target: edge.to,
-    label: edge.label,
-    style: { stroke: 'var(--color-trace)' },
-    labelStyle: { fill: 'var(--color-text-muted)', fontSize: 10 },
-  }));
-
-  // Only layout-relevant values participate. New array identities or
-  // description updates must not rerun Dagre or reset a user's viewport.
-  const layoutInput = JSON.stringify({ nodes: rawNodes, edges: rawEdges });
-  const { nodes: layoutedNodes, edges: layoutedEdges, bounds } = useMemo(() => {
-    const input = JSON.parse(layoutInput) as { nodes: Node[]; edges: Edge[] };
-    return getArchitectureLayout(input.nodes, input.edges);
+  const layoutInput = architectureLayoutKey(architecture);
+  const { nodes: layoutedNodes, edges: layoutedEdges, bounds: routedBounds } = useMemo(() => {
+    const input = JSON.parse(layoutInput) as { nodes: { id: string }[]; edges: MapprSystem['architecture']['edges'] };
+    const rawNodes: Node[] = input.nodes.map(({ id }) => ({
+      id, type: 'architecture', data: {}, position: { x: 0, y: 0 },
+    }));
+    const rawEdges: Edge[] = input.edges.map((edge, index) => ({
+      id: `${edge.from}-${edge.to}-${index}`, type: 'architecture', source: edge.from, target: edge.to,
+      label: edge.label, style: { stroke: 'var(--color-trace)' }, labelStyle: { fill: 'var(--color-text-muted)', fontSize: 10 },
+    }));
+    return getArchitectureLayout(rawNodes, rawEdges);
   }, [layoutInput]);
+  const bounds = useMemo(() => architectureDisplayBounds(routedBounds, layoutedNodes, viewState.positions), [routedBounds, layoutedNodes, viewState.positions]);
 
   const { setViewport, viewportInitialized } = useReactFlow();
   const canvasWidth = useStore((state) => state.width);
@@ -303,11 +200,14 @@ function ArchitectureCanvasInner({ mapId, architecture, onSystemUpdated }: Archi
     void setViewport(getArchitectureInitialViewport(bounds, canvasWidth, canvasHeight));
   }, [bounds, canvasWidth, canvasHeight, setViewport, viewportInitialized]);
 
-  // Fit at 0.65 or below for structural changes and canvas resizing, independently of
-  // selection, review highlighting and inspector visibility.
+  // Fit once or after an actual canvas resize. Preview/Apply and topology edits
+  // preserve the user's camera; explicit Fit/Readable controls remain available.
   useEffect(() => {
-    resetReadableView();
-  }, [resetReadableView]);
+    if (!viewportInitialized || !canvasWidth || !canvasHeight || !bounds.width || !bounds.height) return;
+    const size = `${canvasWidth}:${canvasHeight}`;
+    if (lastCanvasSize.current === null ? !restoredViewport : lastCanvasSize.current !== size) resetReadableView();
+    lastCanvasSize.current = size;
+  }, [resetReadableView, restoredViewport, viewportInitialized, canvasWidth, canvasHeight, bounds.width, bounds.height]);
 
   const selectedNode = useMemo(
     () => architecture.nodes.find((node) => node.id === selectedNodeId) ?? null,
@@ -335,11 +235,12 @@ function ArchitectureCanvasInner({ mapId, architecture, onSystemUpdated }: Archi
   const nodes = useMemo(
     () => layoutedNodes.map((node) => ({
       ...node,
+      position: viewState.positions[node.id] ?? node.position,
       selected: selectedNode?.id === node.id,
       data: {
         ...node.data,
-        label: node.data.label as string,
-        type: node.data.type as string,
+        label: architecture.nodes.find((item) => item.id === node.id)?.label ?? node.id,
+        type: architecture.nodes.find((item) => item.id === node.id)?.type ?? '',
         highlightSeverity: highlightedNodeIds.has(node.id) ? activeFinding?.severity : undefined,
         isFocused: selectedNode?.id === node.id,
         isConnected: connectedNodeIds.has(node.id),
@@ -349,7 +250,7 @@ function ArchitectureCanvasInner({ mapId, architecture, onSystemUpdated }: Archi
           !highlightedNodeIds.has(node.id),
       } satisfies ArchitectureNodeData,
     })),
-    [layoutedNodes, highlightedNodeIds, activeFinding, selectedNode, connectedNodeIds]
+    [layoutedNodes, highlightedNodeIds, activeFinding, selectedNode, connectedNodeIds, architecture.nodes, viewState.positions]
   );
 
   const edges = useMemo(
@@ -439,10 +340,22 @@ function ArchitectureCanvasInner({ mapId, architecture, onSystemUpdated }: Archi
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         minZoom={ARCHITECTURE_MIN_ZOOM}
-        defaultViewport={defaultViewport}
+        defaultViewport={initialViewport}
+        onMoveEnd={(_, viewport) => onViewStateChange((previous) => ({ ...previous, viewport }))}
+        onNodesChange={(changes) => onViewStateChange((previous) => {
+          let positions: ArchitectureCanvasMemory['positions'] | null = null;
+          for (const change of changes) {
+            if (change.type !== 'position' || !change.position) continue;
+            const old = previous.positions[change.id];
+            if (old?.x === change.position.x && old?.y === change.position.y) continue;
+            positions ??= { ...previous.positions };
+            positions[change.id] = { ...change.position };
+          }
+          return positions ? { ...previous, positions } : previous;
+        })}
         autoPanOnNodeFocus={false}
         onNodeClick={(event, node) => handleSelectNode(node.id, event.currentTarget as HTMLElement)}
-        onPaneClick={() => setSelectedNodeId(null)}
+        onPaneClick={() => onSelectedNodeChange(null)}
       >
         <Background variant={BackgroundVariant.Dots} color="var(--color-canvas-grid)" gap={24} />
         <Controls className={controlStyles.controls} showFitView={false} position="bottom-right">
@@ -469,7 +382,7 @@ function ArchitectureCanvasInner({ mapId, architecture, onSystemUpdated }: Archi
                 if (reviewErrorKind === 'load') {
                   restoreReviewFocusRef.current = document.activeElement === reviewTriggerRef.current;
                   void loadSavedReview();
-                } else if (review && !isReviewPanelOpen && !reviewError) {
+                } else if (reviewSafety.inspection && savedReview || review && !isReviewPanelOpen && !reviewError) {
                   setDiffResult(null);
                   setActiveFindingId(null);
                   setIsReviewPanelOpen(true);
@@ -489,6 +402,7 @@ function ArchitectureCanvasInner({ mapId, architecture, onSystemUpdated }: Archi
                 </>}
               </span>
             </button>
+            <ArtifactStatus safety={reviewSafety} />
             {reviewError && !isReviewPanelOpen && (
               <div role="alert" className="rounded-lg border border-danger bg-surface px-3 py-2 font-body text-xs text-danger">
                 {reviewError}
@@ -499,11 +413,11 @@ function ArchitectureCanvasInner({ mapId, architecture, onSystemUpdated }: Archi
         <Panel position="bottom-center">
           <IterationBar
             mapId={mapId}
-            onSubmit={handleIterate}
-            isRunning={isIterating}
+            historyOnly
+            isRunning={false}
             error={iterationError}
-            lastSummary={lastIterationSummary}
-            refreshKey={versionRefreshKey}
+            lastSummary={null}
+            refreshKey={canonicalRevision ?? 0}
             onCompare={handleCompare}
             isDiffing={isDiffing}
           />
@@ -513,6 +427,7 @@ function ArchitectureCanvasInner({ mapId, architecture, onSystemUpdated }: Archi
       {isReviewPanelOpen && (
         <ArchitectureReview
           findings={review?.findings ?? []}
+          inspection={reviewSafety.inspection ? savedReview : null}
           hasReview={Boolean(review)}
           revision={reviewRevision}
           error={reviewError}

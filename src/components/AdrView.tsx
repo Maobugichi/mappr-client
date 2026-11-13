@@ -8,6 +8,8 @@ import { useGeneratedArtifact } from '@/lib/use-generated-artifact';
 import { usePreservedViewState } from '@/lib/artifact-workspace';
 import { ArtifactActionButton, ArtifactActions } from './ArtifactActions';
 import { MotionDisclosure } from './MotionDisclosure';
+import { ArtifactSafety } from './ArtifactSafety';
+import { exportExpectation } from '@/lib/artifact-safety';
 import styles from './AdrView.module.css';
 
 function slugify(text: string): string {
@@ -130,9 +132,9 @@ function AdrContent({ mapId, productName }: { mapId: string; productName: string
   // Saved ADRs belong to the current tech stack + architecture hash, not map version.
   const {
     record, isLoading, isRunning, isDownloading, isReloading, isWorking, error,
-    downloaded, runGeneration, runDownload, runReload,
+    downloaded, safety, runGeneration, runDownload, runReload,
   } = useGeneratedArtifact({
-    mapId, load: getAdrs, generate: runAdrs,
+    mapId, kind: 'adrs', load: getAdrs, generate: runAdrs,
     loadError: 'Could not load saved ADRs. Retry loading to retrieve them.',
     generationError: 'Something went wrong generating the ADRs.',
     exportError: 'Something went wrong rendering the Markdown.',
@@ -193,9 +195,9 @@ function AdrContent({ mapId, productName }: { mapId: string; productName: string
   const handleDownload = (trigger: HTMLButtonElement) => {
     if (!record || isLoading || isWorking) return;
     setLastAction('download');
-    return runDownload(trigger, async () => ({
+    return runDownload(trigger, async (fresh) => ({
       filename: `${slugify(productName) || 'mappr-export'}-adrs.md`,
-      content: await getAdrsMarkdown(mapId), mimeType: 'text/markdown',
+      content: await getAdrsMarkdown(mapId, exportExpectation(fresh)), mimeType: 'text/markdown',
     }));
   };
 
@@ -213,7 +215,7 @@ function AdrContent({ mapId, productName }: { mapId: string; productName: string
   const primaryPending = isLoading || isRunning || isReloading;
   const actionLabel = record ? 'Regenerate' : 'Generate ADRs';
 
-  return <div className={styles.workspace}>
+  return <ArtifactSafety safety={safety}><div className={styles.workspace}>
     <header className={styles.header}>
       <div className={styles.headingCopy}>
         <h2 ref={libraryHeadingRef} tabIndex={-1} className={styles.heading}>Decision library</h2>
@@ -269,7 +271,7 @@ function AdrContent({ mapId, productName }: { mapId: string; productName: string
           </ul>
         </section>)}
       </div>}
-  </div>;
+  </div></ArtifactSafety>;
 }
 
 export function AdrView(props: { mapId: string; productName: string }) {
